@@ -1,0 +1,70 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bg-app: #f8fafc;
+  --bg-card: #ffffff;
+  --text-main: #1e293b;
+  --text-muted: #64748b;
+  --border-color: #e2e8f0;
+}
+
+.dark {
+  --bg-app: #090d16;
+  --bg-card: #111827;
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+  --border-color: #1f2937;
+}
+
+@theme {
+  --font-sans: "Cairo", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  --color-appbk: var(--bg-app);
+  --color-cardbk: var(--bg-card);
+  --color-txtmain: var(--text-main);
+  --color-txtmuted: var(--text-muted);
+  --color-borderline: var(--border-color);
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+@media print {
+  /* Hide all standard webpage elements including buttons, header, side rails */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Render ONLY the premium printable A4 document area and its details */
+  #printable-invoice-area, #printable-invoice-area * {
+    visibility: visible;
+  }
+  
+  /* Stretch invoice area over the entire physical printed sheet */
+  #printable-invoice-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border: none !important;
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  
+  /* Hide modal buttons and customizing bars during print */
+  #invoice-customizer-panel, #invoice-close-button {
+    display: none !important;
+    visibility: hidden;
+  }
+}
