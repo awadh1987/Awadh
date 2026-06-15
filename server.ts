@@ -2,113 +2,183 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { eq, and, lt, desc } from "drizzle-orm";
-import { db } from "./src/db/index.ts";
-import { 
-  companies, 
-  clients, 
-  operations, 
-  invoices, 
-  expenses, 
-  auditLogs 
-} from "./src/db/schema.ts";
-import { getOrCreateUser } from "./src/db/users.ts";
-import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
+import { loadFromFirestore, saveToFirestore } from "./src/lib/firebaseServer";
 
-async function logEvent(companyId: string, action: string, details: string, user = "awadh.a.1987@gmail.com") {
+interface Company {
+  id: string;
+  name: string;
+  logo_url?: string;
+  primary_color?: string;
+  currency?: string;
+  widget_order?: string;
+  subscription_plan?: "Trial" | "Starter" | "Business" | "Enterprise";
+  subscription_status?: "Active" | "Expired" | "Pending" | "Suspended";
+  subscription_expiry?: string;
+  subscription_price_paid?: number;
+  subscription_billing_cycle?: "monthly" | "yearly";
+}
+
+interface Client {
+  id: string;
+  company_id: string;
+  name: string;
+  company: string;
+  phone: string;
+}
+
+interface Operation {
+  id: string;
+  company_id: string;
+  client_id: string;
+  service: string;
+  cost: number;
+  revenue: number;
+  profit: number;
+  date: string; // YYYY-MM-DD
+  status?: "Pending" | "In Progress" | "Completed";
+}
+
+interface Invoice {
+  id: string;
+  company_id: string;
+  op_id: string;
+  client_id: string;
+  amount: number;
+  status: "Paid" | "Unpaid";
+  due_date: string; // YYYY-MM-DD
+  payment_date?: string; // YYYY-MM-DD
+}
+
+interface AuditLog {
+  id: string;
+  company_id: string;
+  timestamp: string;
+  action: string;
+  details: string;
+  user: string;
+}
+
+interface Expense {
+  id: string;
+  company_id: string;
+  category: string;
+  amount: number;
+  frequency: "weekly" | "monthly" | "yearly" | "once";
+  date: string;
+  description?: string;
+}
+
+// Lowdb simplified alternative using direct fs reading/writing
+const DB_FILE = path.join(process.cwd(), "db_data.json");
+
+function logEvent(db: any, companyId: string, action: string, details: string, user = "awadh.a.1987@gmail.com") {
+  db.audit_logs = db.audit_logs || [];
+  db.audit_logs.push({
+    id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
+    company_id: companyId,
+    timestamp: new Date().toISOString(),
+    action,
+    details,
+    user
+  });
+}
+
+function readDb() {
+  const initialLogs = [
+    { id: "log-initial-1", company_id: "comp-1", timestamp: "2026-06-12T09:00:00.000Z", action: "تأسيس المنشأة وتوليد الضريبة الافتراضية", details: "تم تسجيل وإعداد الكيان المالي الموحد لشركة النخبة للخدمات التقنية وتفعيل نظام الفاتورة المبسطة", user: "awadh.a.1987@gmail.com" },
+    { id: "log-initial-2", company_id: "comp-1", timestamp: "2026-06-12T10:15:00.000Z", action: "إنشاء عميل جديد", details: "تم تسجيل عميل جديد باسم: عبدالله الشمري (مؤسسة الأفق)", user: "awadh.a.1987@gmail.com" },
+    { id: "log-initial-3", company_id: "comp-1", timestamp: "2026-06-12T11:00:00.000Z", action: "إنشاء عملية تشغيلية وتوليد الفاتورة التلقائية", details: "تطوير تطبيق ويب ERP للعميل عبدالله الشمري بمبلغ 25,000 ر.س وتوليد الفاتورة التلقائية #INV-20260601001", user: "awadh.a.1987@gmail.com" }
+  ];
+
+  if (!fs.existsSync(DB_FILE)) {
+    const initialData = {
+      companies: [
+        { id: "comp-1", name: "شركة النخبة للخدمات التقنية", logo_url: "", primary_color: "", currency: "ر.س" },
+        { id: "comp-2", name: "مجموعة الرواد اللوجستية", logo_url: "", primary_color: "", currency: "ر.س" }
+      ],
+      clients: [
+        { id: "cli-1", company_id: "comp-1", name: "عبدالله الشمري", company: "مؤسسة الأفق", phone: "+966501234567" },
+        { id: "cli-2", company_id: "comp-1", name: "فاطمة العمودي", company: "شركة الابتكار", phone: "+966555543210" },
+        { id: "cli-3", company_id: "comp-2", name: "أحمد بن علي", company: "نقليات الخليج", phone: "+966547788990" }
+      ],
+      operations: [
+        { id: "op-1", company_id: "comp-1", client_id: "cli-1", service: "تطوير تطبيق ويب ERP", cost: 12000, revenue: 25000, profit: 13000, date: "2026-06-01" },
+        { id: "op-2", company_id: "comp-1", client_id: "cli-2", service: "حملة تسويق رقمي", cost: 3500, revenue: 8000, profit: 4500, date: "2026-06-05" }
+      ],
+      invoices: [
+        { id: "INV-20260601001", company_id: "comp-1", op_id: "op-1", client_id: "cli-1", amount: 25000, status: "Paid", due_date: "2026-06-08", payment_date: "2026-06-07" },
+        { id: "INV-20260605002", company_id: "comp-1", op_id: "op-2", client_id: "cli-2", amount: 8000, status: "Unpaid", due_date: "2026-06-12" }
+      ],
+      expenses: [
+        { id: "exp-1", company_id: "comp-1", category: "rent", amount: 1500, frequency: "monthly", date: "2026-06-01", description: "إيجار مقر المكتب الرئيسي" },
+        { id: "exp-2", company_id: "comp-1", category: "subscriptions", amount: 350, frequency: "monthly", date: "2026-06-02", description: "اشتراك خوادم سحابية AWS و OpenAI" }
+      ],
+      audit_logs: initialLogs
+    };
+    fs.writeFileSync(DB_FILE, JSON.stringify(initialData, null, 2), "utf-8");
+    return initialData;
+  }
   try {
-    await db.insert(auditLogs).values({
-      id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
-      companyId,
-      timestamp: new Date().toISOString(),
-      action,
-      details,
-      user
-    });
-  } catch (err) {
-    console.error("Failed to write audit log to Cloud SQL:", err);
+    const db = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+    if (!db.expenses) {
+      db.expenses = [
+        { id: "exp-1", company_id: "comp-1", category: "rent", amount: 1500, frequency: "monthly", date: "2026-06-01", description: "إيجار مقر المكتب الرئيسي" },
+        { id: "exp-2", company_id: "comp-1", category: "subscriptions", amount: 350, frequency: "monthly", date: "2026-06-02", description: "اشتراك خوادم سحابية AWS و OpenAI" }
+      ];
+      fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf-8");
+    }
+    if (!db.audit_logs) {
+      db.audit_logs = initialLogs;
+      fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf-8");
+    }
+    // Set default subscription values on companies if not present
+    if (db.companies) {
+      let updated = false;
+      db.companies.forEach((c: any) => {
+        if (!c.subscription_plan) {
+          c.subscription_plan = c.id === "comp-1" ? "Business" : "Trial";
+          c.subscription_status = "Active";
+          c.subscription_expiry = "2027-06-14";
+          c.subscription_price_paid = c.id === "comp-1" ? 150 : 0;
+          c.subscription_billing_cycle = "monthly";
+          updated = true;
+        }
+      });
+      if (updated) {
+        fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf-8");
+      }
+    }
+    return db;
+  } catch (e) {
+    return { companies: [], clients: [], operations: [], invoices: [], expenses: [], audit_logs: [] };
   }
 }
 
-async function seedDatabaseIfEmpty() {
-  try {
-    const existingCompanies = await db.select().from(companies).limit(1);
-    if (existingCompanies.length === 0) {
-      console.log("Cloud SQL database is empty. Seeding initial data...");
-      
-      // Insert companies
-      await db.insert(companies).values([
-        { 
-          id: "comp-1", 
-          name: "شركة النخبة للخدمات التقنية", 
-          logoUrl: "", 
-          primaryColor: "", 
-          currency: "ر.س",
-          subscriptionPlan: "Business",
-          subscriptionStatus: "Active",
-          subscriptionExpiry: "2027-06-14",
-          subscriptionPricePaid: 150,
-          subscriptionBillingCycle: "monthly"
-        },
-        { 
-          id: "comp-2", 
-          name: "مجموعة الرواد اللوجستية", 
-          logoUrl: "", 
-          primaryColor: "", 
-          currency: "ر.س",
-          subscriptionPlan: "Trial",
-          subscriptionStatus: "Active",
-          subscriptionExpiry: "2027-06-14",
-          subscriptionPricePaid: 0,
-          subscriptionBillingCycle: "monthly"
-        }
-      ]);
-
-      // Insert clients
-      await db.insert(clients).values([
-        { id: "cli-1", companyId: "comp-1", name: "عبدالله الشمري", company: "مؤسسة الأفق", phone: "+966501234567" },
-        { id: "cli-2", companyId: "comp-1", name: "فاطمة العمودي", company: "شركة الابتكار", phone: "+966555543210" },
-        { id: "cli-3", companyId: "comp-2", name: "أحمد بن علي", company: "نقليات الخليج", phone: "+966547788990" }
-      ]);
-
-      // Insert operations
-      await db.insert(operations).values([
-        { id: "op-1", companyId: "comp-1", clientId: "cli-1", service: "تطوير تطبيق ويب ERP", cost: 12000, revenue: 25000, profit: 13000, date: "2026-06-01", status: "Completed" },
-        { id: "op-2", companyId: "comp-1", clientId: "cli-2", service: "حملة تسويق رقمي", cost: 3500, revenue: 8000, profit: 4500, date: "2026-06-05", status: "In Progress" }
-      ]);
-
-      // Insert invoices
-      await db.insert(invoices).values([
-        { id: "INV-20260601001", companyId: "comp-1", opId: "op-1", clientId: "cli-1", amount: 25000, status: "Paid", dueDate: "2026-06-08", paymentDate: "2026-06-07" },
-        { id: "INV-20260605002", companyId: "comp-1", opId: "op-2", clientId: "cli-2", amount: 8000, status: "Unpaid", dueDate: "2026-06-12" }
-      ]);
-
-      // Insert expenses
-      await db.insert(expenses).values([
-        { id: "exp-1", companyId: "comp-1", category: "rent", amount: 1500, frequency: "monthly", date: "2026-06-01", description: "إيجار مقر المكتب الرئيسي" },
-        { id: "exp-2", companyId: "comp-1", category: "subscriptions", amount: 350, frequency: "monthly", date: "2026-06-02", description: "اشتراك خوادم سحابية AWS و OpenAI" }
-      ]);
-
-      // Insert audit logs
-      await db.insert(auditLogs).values([
-        { id: "log-initial-1", companyId: "comp-1", timestamp: "2026-06-12T09:00:00.000Z", action: "تأسيس المنشأة وتوليد الضريبة الافتراضية", details: "تم تسجيل وإعداد الكيان المالي الموحد لشركة النخبة للخدمات التقنية وتفعيل نظام الفاتورة المبسطة", user: "awadh.a.1987@gmail.com" },
-        { id: "log-initial-2", companyId: "comp-1", timestamp: "2026-06-12T10:15:00.000Z", action: "إنشاء عميل جديد", details: "تم تسجيل عميل جديد باسم: عبدالله الشمري (مؤسسة الأفق)", user: "awadh.a.1987@gmail.com" },
-        { id: "log-initial-3", companyId: "comp-1", timestamp: "2026-06-12T11:00:00.000Z", action: "إنشاء عملية تشغيلية وتوليد الفاتورة التلقائية", details: "تطوير تطبيق ويب ERP للعميل عبدالله الشمري بمبلغ 25,000 ر.س وتوليد الفاتورة التلقائية #INV-20260601001", user: "awadh.a.1987@gmail.com" }
-      ]);
-
-      console.log("Cloud SQL Seeding completed successfully.");
-    }
-  } catch (err) {
-    console.error("Error checking or seeding Cloud SQL:", err);
-  }
+function writeDb(data: any) {
+  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf-8");
+  saveToFirestore(data).catch((err) => {
+    console.error("Delayed Firestore synchronization write error:", err);
+  });
 }
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // On server startup, ensure Database is Seeded
-  await seedDatabaseIfEmpty();
+  // On server startup, restore state from Firestore if available
+  try {
+    const firestoreData = await loadFromFirestore();
+    if (firestoreData) {
+      console.log("Restored up-to-date SaaS dataset ledger from Firestore on startup.");
+      fs.writeFileSync(DB_FILE, JSON.stringify(firestoreData, null, 2), "utf-8");
+    } else {
+      console.log("No remote database was loaded, synchronization will seed Firestore on primary mutation write.");
+      const localData = readDb();
+      await saveToFirestore(localData);
+    }
+  } catch (err) {
+    console.error("Firestore sync error during server launch restore sequence:", err);
+  }
 
   app.use(express.json());
 
@@ -118,198 +188,156 @@ async function startServer() {
     next();
   });
 
-  // Middleware to sync Firebase users to Postgres schema on-the-fly
-  const syncUserSession = async (req: AuthRequest, res: express.Response, next: express.NextFunction) => {
-    if (req.user) {
-      try {
-        await getOrCreateUser(req.user.uid, req.user.email || "");
-      } catch (err) {
-        console.error("Failed to automatically synchronize user record:", err);
-      }
-    }
-    next();
-  };
-
-  // Helper to extract company tenant key
-  const getCompanyId = (req: express.Request): string => {
-    return (req.headers["x-company-id"] as string) || "comp-1";
-  };
+  // API endpoints
 
   // 1. Get companies
-  app.get("/api/companies", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
-    try {
-      const activeCompanies = await db.select().from(companies);
-      res.json(activeCompanies);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر استرجاع المنشآت: " + err.message });
-    }
+  app.get("/api/companies", (req, res) => {
+    const db = readDb();
+    res.json(db.companies || []);
   });
 
   // 2. Create company
-  app.post("/api/companies", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.post("/api/companies", (req, res) => {
+    const db = readDb();
     const { name } = req.body;
     if (!name) {
       return res.status(400).json({ error: "اسم الشركة مطلوب" });
     }
-    try {
-      const newId = "comp-" + Date.now();
-      await db.insert(companies).values({
-        id: newId,
-        name,
-        logoUrl: "",
-        primaryColor: "",
-        currency: "ر.س",
-        subscriptionPlan: "Trial",
-        subscriptionStatus: "Active",
-        subscriptionExpiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-      });
-
-      const [newComp] = await db.select().from(companies).where(eq(companies.id, newId));
-      res.json(newComp);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر إنشاء الكيان: " + err.message });
-    }
+    const newCompany: Company = {
+      id: "comp-" + Date.now(),
+      name,
+      logo_url: "",
+      primary_color: "",
+      currency: "ر.س"
+    };
+    db.companies = db.companies || [];
+    db.companies.push(newCompany);
+    writeDb(db);
+    res.json(newCompany);
   });
 
   // 2.5. Update company settings
-  app.put("/api/companies/:id", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.put("/api/companies/:id", (req, res) => {
     const { id } = req.params;
     const { name, logo_url, primary_color, currency, widget_order } = req.body;
-    try {
-      const [existing] = await db.select().from(companies).where(eq(companies.id, id));
-      if (!existing) {
-        return res.status(404).json({ error: "الكيان غير موجود" });
-      }
-
-      await db.update(companies)
-        .set({
-          name: name || existing.name,
-          logoUrl: logo_url ?? existing.logoUrl,
-          primaryColor: primary_color ?? existing.primaryColor,
-          currency: currency ?? existing.currency,
-          widgetOrder: widget_order ?? existing.widgetOrder
-        })
-        .where(eq(companies.id, id));
-
-      await logEvent(
-        id,
-        "تعديل إعدادات وهوية المنشأة",
-        `تم تحديث هوية المنشأة "${existing.name}" إلى: الاسم "${name || existing.name}"، العملة: "${currency || "ر.س"}"، واللون الأساسي: "${primary_color || "تلقائي"}"، وترتيب الإحصائيات: "${widget_order || "تلقائي"}"`,
-        req.user?.email || "unknown"
-      );
-
-      const [updated] = await db.select().from(companies).where(eq(companies.id, id));
-      res.json(updated);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر تحديث إعدادات المنشأة: " + err.message });
+    const db = readDb();
+    
+    db.companies = db.companies || [];
+    const index = db.companies.findIndex((c: Company) => c.id === id);
+    if (index === -1) {
+      return res.status(404).json({ error: "الكيان غير موجود" });
     }
+    
+    const prevName = db.companies[index].name;
+    if (name) {
+      db.companies[index].name = name;
+    }
+    db.companies[index].logo_url = logo_url || "";
+    db.companies[index].primary_color = primary_color || "";
+    db.companies[index].currency = currency || "ر.س";
+    db.companies[index].widget_order = widget_order || "";
+    
+    logEvent(
+      db,
+      id,
+      "تعديل إعدادات وهوية المنشأة",
+      `تم تحديث هوية المنشأة "${prevName}" إلى: الاسم "${name || prevName}"، العملة: "${currency || "ر.س"}"، واللون الأساسي: "${primary_color || "تلقائي"}"، وترتيب الإحصائيات: "${widget_order || "تلقائي"}"`
+    );
+    
+    writeDb(db);
+    res.json(db.companies[index]);
   });
 
   // 2.6. Update company subscription plan
-  app.put("/api/companies/:id/subscription", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.put("/api/companies/:id/subscription", (req, res) => {
     const { id } = req.params;
     const { subscription_plan, subscription_billing_cycle, price_paid } = req.body;
-    try {
-      const [existing] = await db.select().from(companies).where(eq(companies.id, id));
-      if (!existing) {
-        return res.status(404).json({ error: "الكيان غير موجود" });
-      }
-
-      const prevPlan = existing.subscriptionPlan || "Trial";
-      const now = new Date();
-      if (subscription_billing_cycle === "yearly") {
-        now.setFullYear(now.getFullYear() + 1);
-      } else {
-        now.setMonth(now.getMonth() + 1);
-      }
-      const expiryStr = now.toISOString().split("T")[0];
-
-      await db.update(companies)
-        .set({
-          subscriptionPlan: subscription_plan,
-          subscriptionBillingCycle: subscription_billing_cycle || "monthly",
-          subscriptionStatus: "Active",
-          subscriptionPricePaid: Number(price_paid) || 0,
-          subscriptionExpiry: expiryStr
-        })
-        .where(eq(companies.id, id));
-
-      await logEvent(
-        id,
-        "ترقية خطة الاشتراك والخدمات",
-        `تم تحديث خطة اشتراك المنشأة من "${prevPlan}" إلى "${subscription_plan}" بدورة دفع: "${subscription_billing_cycle === "yearly" ? "سنوية" : "شهرية"}"`,
-        req.user?.email || "unknown"
-      );
-
-      const [updated] = await db.select().from(companies).where(eq(companies.id, id));
-      res.json(updated);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر ترقية خطة الاشتراك: " + err.message });
+    const db = readDb();
+    
+    db.companies = db.companies || [];
+    const index = db.companies.findIndex((c: Company) => c.id === id);
+    if (index === -1) {
+      return res.status(404).json({ error: "الكيان غير موجود" });
     }
+    
+    const prevPlan = db.companies[index].subscription_plan || "Trial";
+    
+    db.companies[index].subscription_plan = subscription_plan;
+    db.companies[index].subscription_billing_cycle = subscription_billing_cycle || "monthly";
+    db.companies[index].subscription_status = "Active";
+    db.companies[index].subscription_price_paid = Number(price_paid) || 0;
+    
+    const now = new Date();
+    if (subscription_billing_cycle === "yearly") {
+      now.setFullYear(now.getFullYear() + 1);
+    } else {
+      now.setMonth(now.getMonth() + 1);
+    }
+    db.companies[index].subscription_expiry = now.toISOString().split("T")[0];
+    
+    logEvent(
+      db,
+      id,
+      "ترقية خطة الاشتراك والخدمات",
+      `تم تحديث خطة اشتراك المنشأة من "${prevPlan}" إلى "${subscription_plan}" بدورة دفع: "${subscription_billing_cycle === "yearly" ? "سنوية" : "شهرية"}"`
+    );
+    
+    writeDb(db);
+    res.json(db.companies[index]);
   });
 
+  // Mid-tier helper to filter by company (tenant)
+  const getCompanyId = (req: express.Request): string => {
+    return (req.headers["x-company-id"] as string) || "comp-1";
+  };
+
   // 3. Get clients
-  app.get("/api/clients", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.get("/api/clients", (req, res) => {
     const companyId = getCompanyId(req);
-    try {
-      const activeClients = await db.select().from(clients).where(eq(clients.companyId, companyId));
-      res.json(activeClients);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر استرجاع العملاء: " + err.message });
-    }
+    const db = readDb();
+    const clients = (db.clients || []).filter((c: Client) => c.company_id === companyId);
+    res.json(clients);
   });
 
   // 4. Create client
-  app.post("/api/clients", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.post("/api/clients", (req, res) => {
     const companyId = getCompanyId(req);
     const { name, company, phone } = req.body;
     if (!name) {
       return res.status(400).json({ error: "اسم العميل مطلوب" });
     }
-    try {
-      const newId = "cli-" + Date.now();
-      await db.insert(clients).values({
-        id: newId,
-        companyId,
-        name,
-        company: company || "",
-        phone: phone || ""
-      });
-
-      await logEvent(
-        companyId,
-        "إنشاء عميل جديد",
-        `تم تسجيل عميل جديد باسم: "${name}" ${company ? `(${company})` : ""} وهاتف: ${phone || "غير متوفر"}`,
-        req.user?.email || "unknown"
-      );
-
-      const [newCli] = await db.select().from(clients).where(eq(clients.id, newId));
-      res.json(newCli);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر تسجيل العميل: " + err.message });
-    }
+    const db = readDb();
+    const newClient: Client = {
+      id: "cli-" + Date.now(),
+      company_id: companyId,
+      name,
+      company: company || "",
+      phone: phone || ""
+    };
+    db.clients = db.clients || [];
+    db.clients.push(newClient);
+    
+    logEvent(
+      db,
+      companyId,
+      "إنشاء عميل جديد",
+      `تم تسجيل عميل جديد باسم: "${name}" ${company ? `(${company})` : ""} وهاتف: ${phone || "غير متوفر"}`
+    );
+    
+    writeDb(db);
+    res.json(newClient);
   });
 
   // 5. Get operations
-  app.get("/api/operations", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.get("/api/operations", (req, res) => {
     const companyId = getCompanyId(req);
-    try {
-      const activeOps = await db.select().from(operations).where(eq(operations.companyId, companyId));
-      res.json(activeOps);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر تحميل العمليات التشغيلية: " + err.message });
-    }
+    const db = readDb();
+    const operations = (db.operations || []).filter((o: Operation) => o.company_id === companyId);
+    res.json(operations);
   });
 
   // 6. Create operation
-  app.post("/api/operations", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.post("/api/operations", (req, res) => {
     const companyId = getCompanyId(req);
     const { client_id, service, cost, revenue, status } = req.body;
 
@@ -317,68 +345,66 @@ async function startServer() {
       return res.status(400).json({ error: "الخدمة مطلوبة" });
     }
 
-    try {
-      const cVal = Number(cost) || 0;
-      const rVal = Number(revenue) || 0;
-      const profit = rVal - cVal;
-      const opId = "op-" + Date.now();
+    const db = readDb();
+    const cVal = Number(cost) || 0;
+    const rVal = Number(revenue) || 0;
+    const profit = rVal - cVal;
 
-      // Insert operation
-      await db.insert(operations).values({
-        id: opId,
-        companyId,
-        clientId: client_id || "",
-        service,
-        cost: cVal,
-        revenue: rVal,
-        profit,
-        date: new Date().toISOString().split("T")[0],
-        status: status || "In Progress"
-      });
+    const newOp: Operation = {
+      id: "op-" + Date.now(),
+      company_id: companyId,
+      client_id: client_id || "",
+      service,
+      cost: cVal,
+      revenue: rVal,
+      profit,
+      date: new Date().toISOString().split("T")[0],
+      status: status || "In Progress"
+    };
 
-      // Auto-generate invoice
-      const invId = "INV-" + new Date().toISOString().replace(/[-:T.Z]/g, "").substring(0, 14);
-      const dueDate = new Date();
-      dueDate.setDate(dueDate.getDate() + 7);
+    db.operations = db.operations || [];
+    db.operations.push(newOp);
 
-      await db.insert(invoices).values({
-        id: invId,
-        companyId,
-        opId: opId,
-        clientId: client_id || "",
-        amount: rVal,
-        status: "Unpaid",
-        dueDate: dueDate.toISOString().split("T")[0]
-      });
+    // Auto-generate invoice
+    const invId = "INV-" + new Date().toISOString().replace(/[-:T.Z]/g, "").substring(0, 14);
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + 7);
 
-      const [clientObj] = await db.select().from(clients).where(eq(clients.id, client_id || ""));
-      const clientNameStr = clientObj ? `للعميل: "${clientObj.name}"` : "لعميل عام";
-      const [comp] = await db.select().from(companies).where(eq(companies.id, companyId));
+    const newInv: Invoice = {
+      id: invId,
+      company_id: companyId,
+      op_id: newOp.id,
+      client_id: client_id || "",
+      amount: rVal,
+      status: "Unpaid",
+      due_date: dueDate.toISOString().split("T")[0]
+    };
 
-      await logEvent(
-        companyId,
-        "إنشاء عملية وقص فاتورة",
-        `تم إنجاز خدمة: "${service}" بقيمة ${rVal.toLocaleString()} ${comp?.currency || "ر.س"} ${clientNameStr} وتوليد الفاتورة التلقائية (#${invId})`,
-        req.user?.email || "unknown"
-      );
+    db.invoices = db.invoices || [];
+    db.invoices.push(newInv);
 
-      const [retOp] = await db.select().from(operations).where(eq(operations.id, opId));
-      const [retInv] = await db.select().from(invoices).where(eq(invoices.id, invId));
+    const clientObj = (db.clients || []).find((c: any) => c.id === client_id);
+    const clientNameStr = clientObj ? `للعميل: "${clientObj.name}"` : "لعميل عام";
+    
+    logEvent(
+      db,
+      companyId,
+      "إنشاء عملية وقص فاتورة",
+      `تم إنجاز خدمة: "${service}" بقيمة ${rVal.toLocaleString()} ${db.companies?.find((c: any) => c.id === companyId)?.currency || "ر.س"} ${clientNameStr} وتوليد الفاتورة التلقائية (#${invId})`
+    );
 
-      res.json({
-        status: "success",
-        message: "تم إنشاء العملية بنجاح وتوليد الفاتورة التلقائية",
-        operation: retOp,
-        invoice: retInv
-      });
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر تسجيل العملية: " + err.message });
-    }
+    writeDb(db);
+
+    res.json({
+      status: "success",
+      message: "تم إنشاء العملية بنجاح وتوليد الفاتورة التلقائية",
+      operation: newOp,
+      invoice: newInv
+    });
   });
 
   // 6.1. Update operation status
-  app.patch("/api/operations/:id", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.patch("/api/operations/:id", (req, res) => {
     const companyId = getCompanyId(req);
     const { id } = req.params;
     const { status } = req.body;
@@ -387,206 +413,181 @@ async function startServer() {
       return res.status(400).json({ error: "حالة العملية غير صالحة" });
     }
 
-    try {
-      const [op] = await db.select().from(operations).where(and(eq(operations.id, id), eq(operations.companyId, companyId)));
-      if (!op) {
-        return res.status(404).json({ error: "العملية غير موجودة" });
-      }
+    const db = readDb();
+    db.operations = db.operations || [];
+    const opIndex = db.operations.findIndex((o: any) => o.id === id && o.company_id === companyId);
 
-      const oldStatus = op.status || "In Progress";
-      await db.update(operations).set({ status }).where(eq(operations.id, id));
-
-      const statusTranslations: Record<string, string> = {
-        "Pending": "معلقة",
-        "In Progress": "قيد التنفيذ",
-        "Completed": "مكتملة"
-      };
-
-      await logEvent(
-        companyId,
-        "تحديث حالة العملية",
-        `تم تغيير حالة العملية "${op.service}" من (${statusTranslations[oldStatus] || oldStatus}) إلى (${statusTranslations[status] || status})`,
-        req.user?.email || "unknown"
-      );
-
-      const [updated] = await db.select().from(operations).where(eq(operations.id, id));
-      res.json(updated);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر تحديث حالة العملية: " + err.message });
+    if (opIndex === -1) {
+      return res.status(404).json({ error: "العملية غير موجودة" });
     }
+
+    const oldStatus = db.operations[opIndex].status || "In Progress";
+    db.operations[opIndex].status = status;
+
+    const statusTranslations: Record<string, string> = {
+      "Pending": "معلقة",
+      "In Progress": "قيد التنفيذ",
+      "Completed": "مكتملة"
+    };
+
+    logEvent(
+      db,
+      companyId,
+      "تحديث حالة العملية",
+      `تم تغيير حالة العملية "${db.operations[opIndex].service}" من (${statusTranslations[oldStatus] || oldStatus}) إلى (${statusTranslations[status] || status})`
+    );
+
+    writeDb(db);
+    res.json(db.operations[opIndex]);
   });
 
   // 7. Get invoices
-  app.get("/api/invoices", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.get("/api/invoices", (req, res) => {
     const companyId = getCompanyId(req);
-    try {
-      const activeInvs = await db.select().from(invoices).where(eq(invoices.companyId, companyId));
-      res.json(activeInvs);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر استرجاع الفواتير الموحدة: " + err.message });
-    }
+    const db = readDb();
+    const invoices = (db.invoices || []).filter((i: Invoice) => i.company_id === companyId);
+    res.json(invoices);
   });
 
   // 7.1. Get overdue invoices for notification center
-  app.get("/api/invoices/overdue", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.get("/api/invoices/overdue", (req, res) => {
     try {
       const companyId = getCompanyId(req);
+      const db = readDb();
       const todayStr = new Date().toISOString().split("T")[0];
       
-      const overdueList = await db.select()
-        .from(invoices)
-        .where(
-          and(
-            eq(invoices.companyId, companyId),
-            eq(invoices.status, "Unpaid"),
-            lt(invoices.dueDate, todayStr)
-          )
-        );
+      const invoices = (db.invoices || []).filter(
+        (i: Invoice) => i.company_id === companyId && i.status === "Unpaid" && i.due_date && i.due_date < todayStr
+      );
       
-      const activeClients = await db.select().from(clients).where(eq(clients.companyId, companyId));
-      const clientMap = new Map(activeClients.map((c: any) => [c.id, c.name || ""]));
+      const clients = db.clients || [];
+      const clientMap = new Map(
+        clients.filter((c: any) => c && c.id).map((c: any) => [c.id, c.name || ""])
+      );
       
-      const result = overdueList.map((i: any) => ({
+      const result = invoices.map((i: Invoice) => ({
         ...i,
-        client_name: clientMap.get(i.clientId) || "عميل غير معروف",
-        op_id: i.opId,
-        client_id: i.clientId,
-        due_date: i.dueDate,
-        payment_date: i.paymentDate
+        client_name: clientMap.get(i.client_id) || "عميل غير معروف"
       }));
       
       res.json(result);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in /api/invoices/overdue route:", err);
-      res.status(500).json({ error: "تعذر استرجاع الفواتير المتأخرة المحددة" });
+      res.status(500).json({ error: "Internal Server Error" });
     }
   });
 
   // 8. Put/Patch Update Invoice Payment Status
-  app.patch("/api/invoices/:id", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.patch("/api/invoices/:id", (req, res) => {
     const companyId = getCompanyId(req);
     const { id } = req.params;
-    const { status } = req.body; 
+    const { status } = req.body; // "Paid" | "Unpaid"
 
     if (status !== "Paid" && status !== "Unpaid") {
       return res.status(400).json({ error: "حالة الفاتورة غير صالحة" });
     }
 
-    try {
-      const [inv] = await db.select().from(invoices).where(and(eq(invoices.id, id), eq(invoices.companyId, companyId)));
-      if (!inv) {
-        return res.status(404).json({ error: "الفاتورة غير موجودة" });
-      }
+    const db = readDb();
+    const invIndex = (db.invoices || []).findIndex(
+      (i: Invoice) => i.id === id && i.company_id === companyId
+    );
 
-      await db.update(invoices)
-        .set({
-          status,
-          paymentDate: status === "Paid" ? new Date().toISOString().split("T")[0] : null
-        })
-        .where(eq(invoices.id, id));
-
-      const [comp] = await db.select().from(companies).where(eq(companies.id, companyId));
-      const shortInvId = id.split("-").pop() || id;
-
-      await logEvent(
-        companyId,
-        "تحديث حالة سداد الفاتورة",
-        `تحديث فاتورة رقم #${shortInvId} بقيمة ${inv.amount.toLocaleString()} ${comp?.currency || "ر.س"} إلى: ${status === "Paid" ? "✅ مدفوعة ومحصلة" : "⏳ غير مدفوعة / قيد الانتظار"}`,
-        req.user?.email || "unknown"
-      );
-
-      const [updated] = await db.select().from(invoices).where(eq(invoices.id, id));
-      res.json({
-        ...updated,
-        op_id: updated.opId,
-        client_id: updated.clientId,
-        due_date: updated.dueDate,
-        payment_date: updated.paymentDate
-      });
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر سداد الفاتورة: " + err.message });
+    if (invIndex === -1) {
+      return res.status(404).json({ error: "الفاتورة غير موجودة" });
     }
+
+    db.invoices[invIndex].status = status;
+    if (status === "Paid") {
+      db.invoices[invIndex].payment_date = new Date().toISOString().split("T")[0];
+    } else {
+      delete db.invoices[invIndex].payment_date;
+    }
+
+    const currInvoice = db.invoices[invIndex];
+    const shortInvId = id.split("-").pop() || id;
+    const compSetting = (db.companies || []).find((c: any) => c.id === companyId);
+    
+    logEvent(
+      db,
+      companyId,
+      "تحديث حالة سداد الفاتورة",
+      `تحديث فاتورة رقم #${shortInvId} بقيمة ${currInvoice.amount.toLocaleString()} ${compSetting?.currency || "ر.س"} إلى: ${status === "Paid" ? "✅ مدفوعة ومحصلة" : "⏳ غير مدفوعة / قيد الانتظار"}`
+    );
+
+    writeDb(db);
+    res.json(db.invoices[invIndex]);
   });
 
   // 9. Get stats & analysis for dashboard
-  app.get("/api/stats", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.get("/api/stats", (req, res) => {
     const companyId = getCompanyId(req);
-    try {
-      const ops = await db.select().from(operations).where(eq(operations.companyId, companyId));
-      const invs = await db.select().from(invoices).where(eq(invoices.companyId, companyId));
-      const myClients = await db.select().from(clients).where(eq(clients.companyId, companyId));
-      const myExpenses = await db.select().from(expenses).where(eq(expenses.companyId, companyId));
+    const db = readDb();
 
-      let totalRevenue = 0;
-      let totalCost = 0;
-      let totalProfit = 0;
+    const ops = (db.operations || []).filter((o: Operation) => o.company_id === companyId);
+    const invs = (db.invoices || []).filter((i: Invoice) => i.company_id === companyId);
+    const clientsCount = (db.clients || []).filter((c: Client) => c.company_id === companyId).length;
+    const exps = (db.expenses || []).filter((e: any) => e.company_id === companyId);
 
-      ops.forEach((o: any) => {
-        totalRevenue += o.revenue;
-        totalCost += o.cost;
-        totalProfit += o.profit;
-      });
+    let totalRevenue = 0;
+    let totalCost = 0;
+    let totalProfit = 0;
 
-      let totalOpExpenses = 0;
-      myExpenses.forEach((e: any) => {
-        totalOpExpenses += Number(e.amount) || 0;
-      });
+    ops.forEach((o: Operation) => {
+      totalRevenue += o.revenue;
+      totalCost += o.cost;
+      totalProfit += o.profit;
+    });
 
-      totalCost += totalOpExpenses;
-      totalProfit -= totalOpExpenses;
+    // Sum operational and recurring expenses
+    let totalOpExpenses = 0;
+    exps.forEach((e: any) => {
+      totalOpExpenses += Number(e.amount) || 0;
+    });
 
-      let paidAmount = 0;
-      let unpaidAmount = 0;
-      let overdueCount = 0;
+    totalCost += totalOpExpenses;
+    totalProfit -= totalOpExpenses;
 
-      const todayStr = new Date().toISOString().split("T")[0];
+    let paidAmount = 0;
+    let unpaidAmount = 0;
+    let overdueCount = 0;
 
-      invs.forEach((i: any) => {
-        if (i.status === "Paid") {
-          paidAmount += i.amount;
-        } else {
-          unpaidAmount += i.amount;
-          if (i.dueDate && i.dueDate < todayStr) {
-            overdueCount++;
-          }
+    const todayStr = new Date().toISOString().split("T")[0];
+
+    invs.forEach((i: Invoice) => {
+      if (i.status === "Paid") {
+        paidAmount += i.amount;
+      } else {
+        unpaidAmount += i.amount;
+        if (i.due_date && i.due_date < todayStr) {
+          overdueCount++;
         }
-      });
+      }
+    });
 
-      res.json({
-        totalRevenue,
-        totalCost,
-        totalProfit,
-        clientsCount: myClients.length,
-        operationsCount: ops.length,
-        invoicesCount: invs.length,
-        paidAmount,
-        unpaidAmount,
-        overdueCount,
-        profitMargin: totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : "0"
-      });
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر حساب إحصائيات لوحة التحكم: " + err.message });
-    }
+    res.json({
+      totalRevenue,
+      totalCost,
+      totalProfit,
+      clientsCount,
+      operationsCount: ops.length,
+      invoicesCount: invs.length,
+      paidAmount,
+      unpaidAmount,
+      overdueCount,
+      profitMargin: totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : "0"
+    });
   });
 
   // 9.1. Get expenses
-  app.get("/api/expenses", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.get("/api/expenses", (req, res) => {
     const companyId = getCompanyId(req);
-    try {
-      const activeExpenses = await db.select().from(expenses).where(eq(expenses.companyId, companyId));
-      res.json(activeExpenses);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر استرجاع المصروفات الكلية: " + err.message });
-    }
+    const db = readDb();
+    const expenses = (db.expenses || []).filter((e: Expense) => e.company_id === companyId);
+    res.json(expenses);
   });
 
   // 9.2. Create expense
-  app.post("/api/expenses", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.post("/api/expenses", (req, res) => {
     const companyId = getCompanyId(req);
     const { category, amount, frequency, date, description } = req.body;
 
@@ -594,124 +595,119 @@ async function startServer() {
       return res.status(400).json({ error: "الفئة والملبغ مطلوبان" });
     }
 
-    try {
-      const expenseId = "exp-" + Date.now();
-      await db.insert(expenses).values({
-        id: expenseId,
-        companyId,
-        category,
-        amount: Number(amount) || 0,
-        frequency: frequency || "monthly",
-        date: date || new Date().toISOString().split("T")[0],
-        description: description || ""
-      });
+    const db = readDb();
+    const newExpense: Expense = {
+      id: "exp-" + Date.now(),
+      company_id: companyId,
+      category,
+      amount: Number(amount) || 0,
+      frequency: frequency || "monthly",
+      date: date || new Date().toISOString().split("T")[0],
+      description: description || ""
+    };
 
-      const [comp] = await db.select().from(companies).where(eq(companies.id, companyId));
-      const categoryNameAr = category === "rent" ? "إيجار" : category === "salaries" ? "رواتب" : category === "subscriptions" ? "اشتراكات" : category === "utilities" ? "مرافق وخدمات" : category === "marketing" ? "تسويق" : "مصروفات تشغيلية أخرى";
+    db.expenses = db.expenses || [];
+    db.expenses.push(newExpense);
 
-      await logEvent(
-        companyId,
-        "تسجيل مصروف تشغيلي جديد",
-        `تم تسجيل مصروف دوري فئة: (${categoryNameAr}) بمبلغ ${Number(amount).toLocaleString()} ${comp?.currency || "ر.س"} بدورية: (${frequency}) ووصف: "${description || "لا يوجد"}"`,
-        req.user?.email || "unknown"
-      );
+    const compSetting = (db.companies || []).find((c: any) => c.id === companyId);
+    const categoryNameAr = category === "rent" ? "إيجار" : category === "salaries" ? "رواتب" : category === "subscriptions" ? "اشتراكات" : category === "utilities" ? "مرافق وخدمات" : category === "marketing" ? "تسويق" : "مصروفات تشغيلية أخرى";
+    
+    logEvent(
+      db,
+      companyId,
+      "تسجيل مصروف تشغيلي جديد",
+      `تم تسجيل مصروف دوري فئة: (${categoryNameAr}) بمبلغ ${newExpense.amount.toLocaleString()} ${compSetting?.currency || "ر.س"} بدورية: (${frequency}) ووصف: "${description || "لا يوجد"}"`
+    );
 
-      const [retExp] = await db.select().from(expenses).where(eq(expenses.id, expenseId));
-      res.json(retExp);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر إدراج المصروف: " + err.message });
-    }
+    writeDb(db);
+    res.json(newExpense);
   });
 
   // 9.3. Delete expense
-  app.delete("/api/expenses/:id", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.delete("/api/expenses/:id", (req, res) => {
     const companyId = getCompanyId(req);
     const { id } = req.params;
-    try {
-      const [exp] = await db.select().from(expenses).where(and(eq(expenses.id, id), eq(expenses.companyId, companyId)));
-      if (!exp) {
-        return res.status(404).json({ error: "المصروف غير موجود" });
-      }
+    const db = readDb();
 
-      await db.delete(expenses).where(eq(expenses.id, id));
-
-      const [comp] = await db.select().from(companies).where(eq(companies.id, companyId));
-      const categoryNameAr = exp.category === "rent" ? "إيجار" : exp.category === "salaries" ? "رواتب" : exp.category === "subscriptions" ? "اشتراكات" : exp.category === "utilities" ? "مرافق وخدمات" : exp.category === "marketing" ? "تسويق" : "مصروفات أخرى";
-
-      await logEvent(
-        companyId,
-        "حذف مصروف تشغيلي",
-        `تم حذف المصروف الدوري فئة: (${categoryNameAr}) بمبلغ ${exp.amount.toLocaleString()} ${comp?.currency || "ر.س"}`,
-        req.user?.email || "unknown"
-      );
-
-      res.json({ success: true, message: "تم حذف المصروف بنجاح" });
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر إلغاء وحذف المصروف: " + err.message });
+    db.expenses = db.expenses || [];
+    const index = db.expenses.findIndex((e: any) => e.id === id && e.company_id === companyId);
+    if (index === -1) {
+      return res.status(404).json({ error: "المصروف غير موجود" });
     }
+
+    const exp = db.expenses[index];
+    db.expenses.splice(index, 1);
+
+    const compSetting = (db.companies || []).find((c: any) => c.id === companyId);
+    const categoryNameAr = exp.category === "rent" ? "إيجار" : exp.category === "salaries" ? "رواتب" : exp.category === "subscriptions" ? "اشتراكات" : exp.category === "utilities" ? "مرافق وخدمات" : exp.category === "marketing" ? "تسويق" : "مصروفات أخرى";
+
+    logEvent(
+      db,
+      companyId,
+      "حذف مصروف تشغيلي",
+      `تم حذف المصروف الدوري فئة: (${categoryNameAr}) بمبلغ ${exp.amount.toLocaleString()} ${compSetting?.currency || "ر.س"}`
+    );
+
+    writeDb(db);
+    res.json({ success: true, message: "تم حذف المصروف بنجاح" });
   });
 
   // 9.5. Get Audit Logs
-  app.get("/api/audit-logs", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.get("/api/audit-logs", (req, res) => {
     const companyId = getCompanyId(req);
-    try {
-      const logs = await db.select().from(auditLogs).where(eq(auditLogs.companyId, companyId)).orderBy(desc(auditLogs.timestamp));
-      res.json(logs);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر استرجاع سجلات الرقابة الأمنية: " + err.message });
-    }
+    const db = readDb();
+    const logs = (db.audit_logs || []).filter((l: AuditLog) => l.company_id === companyId);
+    const sorted = [...logs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    res.json(sorted);
   });
 
   // 9.6. Log custom action from client
-  app.post("/api/audit-logs", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.post("/api/audit-logs", (req, res) => {
     const companyId = getCompanyId(req);
     const { action, details, user } = req.body;
     if (!action) {
       return res.status(400).json({ error: "اسم الإجراء مطلوب" });
     }
-    try {
-      await logEvent(companyId, action, details || "", user || req.user?.email || "awadh.a.1987@gmail.com");
-      res.json({ status: "success" });
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر تسجيل العملية في السجلات الكلية" });
-    }
+    const db = readDb();
+    logEvent(db, companyId, action, details || "", user || "awadh.a.1987@gmail.com");
+    writeDb(db);
+    res.json({ status: "success" });
   });
 
   // 9.7. Delete operation and cancel invoice
-  app.delete("/api/operations/:id", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.delete("/api/operations/:id", (req, res) => {
     const companyId = getCompanyId(req);
     const { id } = req.params;
-    try {
-      const [op] = await db.select().from(operations).where(and(eq(operations.id, id), eq(operations.companyId, companyId)));
-      if (!op) {
-        return res.status(404).json({ error: "العملية التشغيلية غير موجودة" });
-      }
+    const db = readDb();
 
-      // Delete associated invoices
-      await db.delete(invoices).where(eq(invoices.opId, id));
-      // Delete operation
-      await db.delete(operations).where(eq(operations.id, id));
-
-      const [clientObj] = await db.select().from(clients).where(eq(clients.id, op.clientId));
-      const clientNameStr = clientObj ? `للعميل "${clientObj.name}"` : "لعميل عام";
-      const [comp] = await db.select().from(companies).where(eq(companies.id, companyId));
-
-      await logEvent(
-        companyId,
-        "حذف عملية تشغيلية",
-        `تم حذف الخدمة: "${op.service}" بقيمة ${op.revenue.toLocaleString()} ${comp?.currency || "ر.س"} ${clientNameStr}، وإلغاء فواتيرها التلقائية والافتراضية المرتبطة به.`,
-        req.user?.email || "unknown"
-      );
-
-      res.json({ success: true, message: "تم حذف العملية التشغيلية وإلغاء الفواتير بنجاح" });
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر مسح العملية التشغيلية أو الفواتير التابعة: " + err.message });
+    db.operations = db.operations || [];
+    const opIndex = (db.operations || []).findIndex((o: any) => o.id === id && o.company_id === companyId);
+    if (opIndex === -1) {
+      return res.status(404).json({ error: "العملية التشغيلية غير موجودة" });
     }
+
+    const op = db.operations[opIndex];
+
+    // Delete associated invoices
+    db.invoices = (db.invoices || []).filter((i: any) => !(i.op_id === id && i.company_id === companyId));
+
+    // Remove operation
+    db.operations.splice(opIndex, 1);
+
+    // Get client details for logging
+    const clientObj = (db.clients || []).find((c: any) => c.id === op.client_id);
+    const clientNameStr = clientObj ? `للعميل "${clientObj.name}"` : "لعميل عام";
+    const compSetting = (db.companies || []).find((c: any) => c.id === companyId);
+
+    logEvent(
+      db,
+      companyId,
+      "حذف عملية تشغيلية",
+      `تم حذف الخدمة: "${op.service}" بقيمة ${op.revenue.toLocaleString()} ${compSetting?.currency || "ر.س"} ${clientNameStr}، وإلغاء فواتيرها التلقائية والافتراضية المرتبطة به.`
+    );
+
+    writeDb(db);
+    res.json({ success: true, message: "تم حذف العملية التشغيلية وإلغاء الفواتير بنجاح" });
   });
 
   // --- Database Resilience & Daily Secure Backups Service ---
@@ -720,48 +716,35 @@ async function startServer() {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
   }
 
-  async function triggerBackup(isAuto: boolean, companyId = "comp-1", userEmail = "awadh.a.1987@gmail.com") {
+  function triggerBackup(isAuto: boolean, companyId = "comp-1"): { success: boolean; filename: string; size: number; timestamp: string } {
     try {
-      // Load all tables from Cloud SQL
-      const allCompanies = await db.select().from(companies);
-      const allClients = await db.select().from(clients);
-      const allOperations = await db.select().from(operations);
-      const allInvoices = await db.select().from(invoices);
-      const allExpenses = await db.select().from(expenses);
-      const allLogs = await db.select().from(auditLogs);
-
-      const dbBackupObj = {
-        companies: allCompanies,
-        clients: allClients,
-        operations: allOperations,
-        invoices: allInvoices,
-        expenses: allExpenses,
-        audit_logs: allLogs
-      };
-
-      const dateStr = new Date().toISOString().split("T")[0];
+      const db = readDb();
+      const dateStr = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
       const timestampStr = Date.now();
       const filename = `backup-${dateStr}-${timestampStr}-${isAuto ? "auto" : "manual"}.json`;
       const destPath = path.join(BACKUP_DIR, filename);
-
-      fs.writeFileSync(destPath, JSON.stringify(dbBackupObj, null, 2), "utf-8");
+      
+      const dbContent = JSON.stringify(db, null, 2);
+      fs.writeFileSync(destPath, dbContent, "utf-8");
+      
       const size = fs.statSync(destPath).size;
-
-      await logEvent(
+      
+      logEvent(
+        db,
         companyId,
         isAuto ? "نسخ احتياطي تلقائي للبيانات" : "نسخ احتياطي يدوي للبيانات",
-        `تم إنشاء نسخة احتياطية بنجاح وحفظها في الحاوية السحابية الآمنة باسم: ${filename} بحجم ${(size / 1024).toFixed(2)} KB.`,
-        userEmail
+        `تم إنشاء نسخة احتياطية بنجاح وحفظها في الحاوية السحابية الآمنة باسم: ${filename} بحجم ${(size / 1024).toFixed(2)} KB.`
       );
-
+      writeDb(db);
+      
       return { success: true, filename, size, timestamp: new Date().toISOString() };
     } catch (error) {
-      console.error("Backup trigger failed:", error);
+      console.error("Backup failed:", error);
       throw error;
     }
   }
 
-  async function runDailyBackupCheck() {
+  function runDailyBackupCheck() {
     try {
       if (!fs.existsSync(BACKUP_DIR)) {
         fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -773,7 +756,7 @@ async function startServer() {
       
       if (!hasBackupForToday) {
         console.log(`[Backup Service] No backup found for today (${dateToday}). Performing automatic system daily backup...`);
-        const result = await triggerBackup(true, "comp-1");
+        const result = triggerBackup(true, "comp-1");
         console.log(`[Backup Service] Daily automatic backup completed successfully: ${result.filename}`);
       } else {
         console.log(`[Backup Service] Daily backup already exists for today (${dateToday}). Skipping daily run.`);
@@ -783,14 +766,12 @@ async function startServer() {
     }
   }
 
-  // Run immediately on boot and set hourly interval
-  runDailyBackupCheck().catch(console.error);
-  setInterval(() => {
-    runDailyBackupCheck().catch(console.error);
-  }, 3600000);
+  // Run immediately on boot and set hourly interval (3600000 ms)
+  runDailyBackupCheck();
+  setInterval(runDailyBackupCheck, 3600000);
 
   // 9.8. Get backups list
-  app.get("/api/backups", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.get("/api/backups", (req, res) => {
     try {
       if (!fs.existsSync(BACKUP_DIR)) {
         return res.json([]);
@@ -816,86 +797,112 @@ async function startServer() {
   });
 
   // 9.9. Trigger Backup manually
-  app.post("/api/backups/trigger", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  app.post("/api/backups/trigger", (req, res) => {
     const companyId = getCompanyId(req);
     try {
-      const result = await triggerBackup(false, companyId, req.user?.email || "awadh.a.1987@gmail.com");
+      const result = triggerBackup(false, companyId);
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: "تعذر تنفيذ النسخ الاحتياطي الكلي: " + error.message });
     }
   });
 
-  // 9.10. Get archive eligibility status & counts
-  app.get("/api/archive/status", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
+  // --- Database Archiving Service for Performance Optimization ---
+  // Get archive eligibility status & counts
+  app.get("/api/archive/status", (req, res) => {
     const companyId = getCompanyId(req);
-    try {
-      const oneYearAgo = new Date();
-      oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-      const cutoffDate = oneYearAgo.toISOString().split("T")[0];
+    const db = readDb();
+    
+    // Calculates a 1 year cut-off boundary dynamically
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    const cutoffDate = oneYearAgo.toISOString().split("T")[0]; // YYYY-MM-DD
+    
+    const activeOps = db.operations || [];
+    const activeInvs = db.invoices || [];
+    
+    const archivableOps = activeOps.filter((o: any) => o.company_id === companyId && o.date < cutoffDate);
+    const archivableOpIds = new Set(archivableOps.map((o: any) => o.id));
+    
+    const archivableInvs = activeInvs.filter((i: any) => 
+      i.company_id === companyId && 
+      (i.due_date < cutoffDate || archivableOpIds.has(i.op_id))
+    );
+    
+    const archivedOpsCount = (db.archived_operations || []).filter((o: any) => o.company_id === companyId).length;
+    const archivedInvsCount = (db.archived_invoices || []).filter((i: any) => i.company_id === companyId).length;
+    
+    res.json({
+      cutoffDate,
+      archivableOpsCount: archivableOps.length,
+      archivableInvsCount: archivableInvs.length,
+      archivedOpsCount,
+      archivedInvsCount
+    });
+  });
 
-      const activeOps = await db.select().from(operations).where(and(eq(operations.companyId, companyId), lt(operations.date, cutoffDate)));
-      const activeInvs = await db.select().from(invoices).where(and(eq(invoices.companyId, companyId), lt(invoices.dueDate, cutoffDate)));
-
-      res.json({
-        cutoffDate,
-        archivableOpsCount: activeOps.length,
-        archivableInvsCount: activeInvs.length,
+  // Execute database archival moving old data to secondary cold archive storage
+  app.post("/api/archive/run", (req, res) => {
+    const companyId = getCompanyId(req);
+    const db = readDb();
+    
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    const cutoffDate = oneYearAgo.toISOString().split("T")[0]; // YYYY-MM-DD
+    
+    db.operations = db.operations || [];
+    db.invoices = db.invoices || [];
+    db.archived_operations = db.archived_operations || [];
+    db.archived_invoices = db.archived_invoices || [];
+    
+    // Select candidates
+    const archivableOps = db.operations.filter((o: any) => o.company_id === companyId && o.date < cutoffDate);
+    const archivableOpIds = new Set(archivableOps.map((o: any) => o.id));
+    
+    const archivableInvs = db.invoices.filter((i: any) => 
+      i.company_id === companyId && 
+      (i.due_date < cutoffDate || archivableOpIds.has(i.op_id))
+    );
+    
+    if (archivableOps.length === 0 && archivableInvs.length === 0) {
+      return res.json({
+        success: true,
+        message: "لا توجد أي عمليات أو فواتير قديمة (مضى عليها أكثر من عام) لأرشفتها حالياً.",
         archivedOpsCount: 0,
         archivedInvsCount: 0
       });
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "تعذر جلب حالة الأرشفة: " + err.message });
     }
-  });
-
-  // 9.11. Execute database archival (simple delete for active ones, keeping tables lightweight)
-  app.post("/api/archive/run", requireAuth, syncUserSession, async (req: AuthRequest, res) => {
-    const companyId = getCompanyId(req);
-    try {
-      const oneYearAgo = new Date();
-      oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-      const cutoffDate = oneYearAgo.toISOString().split("T")[0];
-
-      // Select archivable candidates
-      const archivableOps = await db.select().from(operations).where(and(eq(operations.companyId, companyId), lt(operations.date, cutoffDate)));
-
-      if (archivableOps.length === 0) {
-        return res.json({
-          success: true,
-          message: "لا توجد أي عمليات أو فواتير قديمة (مضى عليها أكثر من عام) لأرشفتها حالياً.",
-          archivedOpsCount: 0,
-          archivedInvsCount: 0
-        });
-      }
-
-      // Delete the old invoices/operations to speed up local indexing
-      await db.delete(invoices).where(and(eq(invoices.companyId, companyId), lt(invoices.dueDate, cutoffDate)));
-      await db.delete(operations).where(and(eq(operations.companyId, companyId), lt(operations.date, cutoffDate)));
-
-      const [comp] = await db.select().from(companies).where(eq(companies.id, companyId));
-      const currencyStr = comp?.currency || "ر.س";
-      const totalRevSaved = archivableOps.reduce((sum: number, o: any) => sum + (o.revenue || 0), 0);
-
-      await logEvent(
-        companyId,
-        "أرشفة البيانات القديمة لتسريع الاستعلام",
-        `تمت أرشفة ${archivableOps.length} عملية تفاصيل فواتير مضى عليها أكثر من عام (قبل تاريخ ${cutoffDate}). قيمة العقود التشغيلية المؤرشفة: ${totalRevSaved.toLocaleString()} ${currencyStr}.`,
-        req.user?.email || "unknown"
-      );
-
-      res.json({
-        success: true,
-        message: `تم ترحيل وتأمين البيانات القديمة بنجاح! تم أرشفة ${archivableOps.length} عملية تشغيلية ماليًا.`,
-        archivedOpsCount: archivableOps.length,
-        archivedInvsCount: 0,
-        cutoffDate
-      });
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: "فشل ترحيل الأرشيف اليدوي: " + err.message });
-    }
+    
+    // Append to archive arrays
+    db.archived_operations.push(...archivableOps);
+    db.archived_invoices.push(...archivableInvs);
+    
+    // Remove from active arrays
+    db.operations = db.operations.filter((o: any) => !(o.company_id === companyId && o.date < cutoffDate));
+    db.invoices = db.invoices.filter((i: any) => 
+      !(i.company_id === companyId && (i.due_date < cutoffDate || archivableOpIds.has(i.op_id)))
+    );
+    
+    const compSetting = (db.companies || []).find((c: any) => c.id === companyId);
+    const currencyStr = compSetting?.currency || "ر.س";
+    const totalRevSaved = archivableOps.reduce((sum: number, o: any) => sum + (o.revenue || 0), 0);
+    
+    logEvent(
+      db,
+      companyId,
+      "أرشفة البيانات القديمة لتسريع الاستعلام",
+      `تمت أرشفة ${archivableOps.length} عملية و ${archivableInvs.length} تفاصيل فواتير مضى عليها أكثر من عام (قبل تاريخ ${cutoffDate}). تم نقلها للأرشيف المستقل بنجاح لزيادة السرعة والأداء. قيمة العقود التشغيلية المؤرشفة: ${totalRevSaved.toLocaleString()} ${currencyStr}.`
+    );
+    
+    writeDb(db);
+    
+    res.json({
+      success: true,
+      message: `تم ترحيل البيانات القديمة بنجاح! تم أرشفة ${archivableOps.length} عملية تشغيلية و ${archivableInvs.length} فاتورة.`,
+      archivedOpsCount: archivableOps.length,
+      archivedInvsCount: archivableInvs.length,
+      cutoffDate
+    });
   });
 
   // Vite integration
@@ -918,6 +925,4 @@ async function startServer() {
   });
 }
 
-startServer().catch((e) => {
-  console.error("Critical server launch failure:", e);
-});
+startServer();
