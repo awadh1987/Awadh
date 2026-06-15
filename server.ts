@@ -807,6 +807,54 @@ async function startServer() {
     }
   });
 
+  // 9.10. Google API Proxy Endpoint to bypass iframe CORS restrictions
+  app.post("/api/google-proxy", async (req: express.Request, res: express.Response) => {
+    const { url, method, body } = req.body;
+    if (!url) {
+      return res.status(400).json({ error: "URL is required" });
+    }
+
+    try {
+      const parsedUrl = new URL(url);
+      if (!parsedUrl.hostname.endsWith(".googleapis.com")) {
+        return res.status(400).json({ error: "Only Google APIs are permitted" });
+      }
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+
+      if (req.headers.authorization) {
+        headers["Authorization"] = req.headers.authorization;
+      }
+
+      const fetchOptions: any = {
+        method: method || "GET",
+        headers,
+      };
+
+      if (body) {
+        fetchOptions.body = typeof body === "string" ? body : JSON.stringify(body);
+      }
+
+      const response = await fetch(url, fetchOptions);
+      const contentType = response.headers.get("content-type");
+
+      res.status(response.status);
+
+      if (contentType && contentType.includes("application/json")) {
+        const data = await response.json();
+        res.json(data);
+      } else {
+        const text = await response.text();
+        res.send(text);
+      }
+    } catch (err: any) {
+      console.error("Google proxy error:", err);
+      res.status(500).json({ error: "Google Proxy Error", details: err.message });
+    }
+  });
+
   // --- Database Archiving Service for Performance Optimization ---
   // Get archive eligibility status & counts
   app.get("/api/archive/status", (req, res) => {

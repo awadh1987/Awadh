@@ -2,7 +2,7 @@ import React, { useState, useMemo } from "react";
 import { Operation, Client } from "../types";
 import { 
   PlusCircle, Search, DollarSign, HelpCircle, Activity, Briefcase, Trash2, 
-  Calendar, SlidersHorizontal, X, Filter 
+  Calendar, SlidersHorizontal, X, Filter, UploadCloud, FileSpreadsheet, Download, Check 
 } from "lucide-react";
 import { useLanguage } from "../lib/LanguageContext";
 
@@ -30,6 +30,219 @@ export default function Operations({ operations, clients, companyCurrency = "ر.
   const [filterClientId, setFilterClientId] = useState("");
   const [filterStartDate, setFilterStartDate] = useState("");
   const [filterEndDate, setFilterEndDate] = useState("");
+
+  // CSV Import States
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [parsedRows, setParsedRows] = useState<any[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState("");
+  const [importSuccess, setImportSuccess] = useState("");
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const parseCsvText = (text: string) => {
+    setImportError("");
+    setImportSuccess("");
+    try {
+      const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+      if (lines.length < 2) {
+        throw new Error(language === "ar" ? "ملف CSV فارغ أو لا يحتوي على صفوف بيانات" : "CSV file is empty or has no data rows");
+      }
+
+      const delimiter = text.includes(";") ? ";" : ",";
+      
+      const parseCsvLine = (line: string): string[] => {
+        const result: string[] = [];
+        let current = "";
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+          if (char === '"' || char === "'") {
+            inQuotes = !inQuotes;
+          } else if (char === delimiter && !inQuotes) {
+            result.push(current.trim().replace(/^['"]|['"]$/g, ""));
+            current = "";
+          } else {
+            current += char;
+          }
+        }
+        result.push(current.trim().replace(/^['"]|['"]$/g, ""));
+        return result;
+      };
+
+      const headers = parseCsvLine(lines[0]).map(h => h.toLowerCase().trim());
+      
+      const serviceIdx = headers.findIndex(h => h.includes("service") || h.includes("الخدمة") || h.includes("العملية"));
+      const revenueIdx = headers.findIndex(h => h.includes("revenue") || h.includes("الإيراد") || h.includes("السعر"));
+      const costIdx = headers.findIndex(h => h.includes("cost") || h.includes("التكلفة"));
+      const statusIdx = headers.findIndex(h => h.includes("status") || h.includes("الحالة"));
+      const clientIdx = headers.findIndex(h => h.includes("client") || h.includes("العميل") || h.includes("المشترك"));
+
+      if (serviceIdx === -1) {
+        throw new Error(
+          language === "ar" 
+            ? "العمود 'الخدمة' (service) مطلوب في السطر الأول من ملف CSV" 
+            : "The 'service' column is required as a header in the CSV file"
+        );
+      }
+
+      const rows: any[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const columns = parseCsvLine(lines[i]);
+        if (columns.length === 0 || (columns.length === 1 && columns[0] === "")) continue;
+
+        const serviceName = columns[serviceIdx];
+        if (!serviceName) continue;
+
+        const revenueVal = revenueIdx !== -1 && columns[revenueIdx] ? Number(columns[revenueIdx].replace(/[^0-9.]/g, "")) : 0;
+        const costVal = costIdx !== -1 && columns[costIdx] ? Number(columns[costIdx].replace(/[^0-9.]/g, "")) : 0;
+        
+        // Resolve status
+        let rawStatus = statusIdx !== -1 && columns[statusIdx] ? columns[statusIdx].trim() : "In Progress";
+        let resolvedStatus: "Pending" | "In Progress" | "Completed" = "In Progress";
+        const lowercaseStatus = rawStatus.toLowerCase();
+        if (lowercaseStatus.includes("complete") || lowercaseStatus.includes("مكتمل") || lowercaseStatus.includes("تم")) {
+          resolvedStatus = "Completed";
+        } else if (lowercaseStatus.includes("pend") || lowercaseStatus.includes("معلق")) {
+          resolvedStatus = "Pending";
+        }
+
+        // Match client Name
+        let linkedClientId = "";
+        let matchedClientName = "";
+        if (clientIdx !== -1 && columns[clientIdx]) {
+          const clientSearchStr = columns[clientIdx].trim().toLowerCase();
+          if (clientSearchStr) {
+            const matchedCli = clients.find(c => 
+              c.name.toLowerCase().includes(clientSearchStr) || 
+              (c.company && c.company.toLowerCase().includes(clientSearchStr))
+            );
+            if (matchedCli) {
+              linkedClientId = matchedCli.id;
+              matchedClientName = matchedCli.name;
+            } else {
+              matchedClientName = columns[clientIdx];
+            }
+          }
+        }
+
+        rows.push({
+          service: serviceName,
+          cost: costVal,
+          revenue: revenueVal,
+          status: resolvedStatus,
+          client_id: linkedClientId,
+          clientName: matchedClientName
+        });
+      }
+
+      if (rows.length === 0) {
+        throw new Error(language === "ar" ? "لم ينجح النظام في قراءة أي صفوف صالحة من ملف CSV" : "Could not parse any valid operations rows from this CSV file");
+      }
+
+      setParsedRows(rows);
+    } catch (err: any) {
+      setImportError(err.message || "Failed to parse CSV file");
+      setParsedRows([]);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    setImportError("");
+    setImportSuccess("");
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      if (file.type !== "text/csv" && !file.name.endsWith(".csv")) {
+        setImportError(language === "ar" ? "الرجاء اختيار ملف بنظام CSV فقط للتوافق مع إكسل." : "Please select a standard CSV file format.");
+        return;
+      }
+      setCsvFile(file);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const text = event.target?.result as string;
+        parseCsvText(text);
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setImportError("");
+    setImportSuccess("");
+    if (e.target.files && e.target.files.length > 0) {
+      const file = e.target.files[0];
+      setCsvFile(file);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const text = event.target?.result as string;
+        parseCsvText(text);
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const handleImportSubmit = async () => {
+    if (parsedRows.length === 0) return;
+    setImporting(true);
+    setImportError("");
+    setImportSuccess("");
+
+    let successCount = 0;
+    try {
+      for (const row of parsedRows) {
+        await onCreateOperation({
+          service: row.service,
+          client_id: row.client_id,
+          cost: row.cost,
+          revenue: row.revenue,
+          status: row.status
+        });
+        successCount++;
+      }
+      setImportSuccess(
+        language === "ar" 
+          ? `تم استيراد ${successCount} عملية بنجاح وقص فواتير تشغيلية لها!` 
+          : `Successfully imported ${successCount} operations & generated systemic invoices!`
+      );
+      setParsedRows([]);
+      setCsvFile(null);
+    } catch (err: any) {
+      setImportError(
+        language === "ar"
+          ? `حدث خطأ أثناء الاستيراد الدفعي بعد استيراد ${successCount} عمليات: ${err?.message || ""}`
+          : `Batch import failed after importing ${successCount} items: ${err?.message || ""}`
+      );
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const downloadSampleCSV = () => {
+    const csvContent = "service,revenue,cost,status,client\n" +
+      '"ERP System Development",25000,12000,"Completed","عبدالله الشمري"\n' +
+      '"Marketing Campaign",8000,3500,"In Progress","فاطمة العمودي"\n' +
+      '"SaaS Server Hosting",1500,400,"Pending",""\n';
+    
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", "operations_sample.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
   const [filterMinVal, setFilterMinVal] = useState<number | "">("");
   const [filterMaxVal, setFilterMaxVal] = useState<number | "">("");
   const [showFilters, setShowFilters] = useState(false);
@@ -238,6 +451,146 @@ export default function Operations({ operations, clients, companyCurrency = "ر.
                 : "Upon logging operations, a clean unpaid invoice due in 7 days is auto-issued under active accounts."}
             </p>
           </form>
+        </div>
+
+        {/* CSV Import Component Card */}
+        <div id="csv-import-card" className="bg-cardbk p-6 rounded-2xl shadow-sm border border-borderline space-y-4">
+          <div className="flex items-center justify-between border-b border-borderline pb-3">
+            <div className="flex items-center gap-2">
+              <FileSpreadsheet className="w-5 h-5 text-emerald-500" />
+              <h3 className="text-sm font-bold text-txtmain">
+                {language === "ar" ? "استيراد العمليات مجمعة (CSV)" : "SaaS Operations Import (CSV)"}
+              </h3>
+            </div>
+            <button 
+              type="button" 
+              onClick={downloadSampleCSV}
+              className="text-[10px] text-indigo-500 hover:text-indigo-600 font-bold flex items-center gap-1"
+              title={language === "ar" ? "تحميل نموذج CSV التجريبي" : "Download sample CSV template"}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{language === "ar" ? "تحميل نموذج" : "Sample"}</span>
+            </button>
+          </div>
+
+          <p className="text-xs text-txtmuted leading-relaxed">
+            {language === "ar" 
+              ? "قم بسحب ملف CSV الخاص بالعمليات وإفلاته هنا لتسجيل العمليات وحساب الأرباح تلقائياً." 
+              : "Drag and drop your operations CSV file here to batch load records and auto-calculate income."}
+          </p>
+
+          {/* Drag & Drop Zone */}
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => document.getElementById("csv-file-input")?.click()}
+            className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all duration-200 flex flex-col items-center justify-center gap-2 ${
+              isDragging 
+                ? "border-indigo-500 bg-indigo-500/10" 
+                : "border-borderline hover:border-indigo-500 hover:bg-appbk/40"
+            }`}
+          >
+            <input
+              id="csv-file-input"
+              type="file"
+              accept=".csv"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+            <UploadCloud className={`w-8 h-8 ${isDragging ? "text-indigo-500 animate-bounce" : "text-txtmuted"}`} />
+            <div className="text-xs">
+              {csvFile ? (
+                <span className="text-emerald-500 font-bold flex items-center gap-1">
+                  <Check className="w-4 h-4" />
+                  {csvFile.name}
+                </span>
+              ) : (
+                <span className="text-txtmuted">
+                  {language === "ar" 
+                    ? "اسحب ملف .csv هنا أو انقر للتصفح" 
+                    : "Drag or drop .csv file here or click to browse"}
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] text-txtmuted/70">
+              {language === "ar" ? "الأعمدة المدعومة: service, revenue, cost, client, status" : "Supported columns: service, revenue, cost, client, status"}
+            </span>
+          </div>
+
+          {/* Error and Success states */}
+          {importError && (
+            <div className="p-3 bg-rose-500/10 text-rose-500 text-xs rounded-xl font-medium border border-rose-500/20 leading-relaxed">
+              {importError}
+            </div>
+          )}
+
+          {importSuccess && (
+            <div className="p-3 bg-emerald-500/10 text-emerald-500 text-xs rounded-xl font-medium border border-emerald-500/20 leading-relaxed">
+              {importSuccess}
+            </div>
+          )}
+
+          {/* Parsed Output Preview before final upload */}
+          {parsedRows.length > 0 && (
+            <div className="space-y-3 bg-appbk/40 p-3 rounded-xl border border-borderline">
+              <div className="flex justify-between items-center text-xs text-txtmain">
+                <span className="font-bold">
+                  {language === "ar" 
+                    ? `مستندات جاهزة للاستيراد (${parsedRows.length})` 
+                    : `Ready to import: ${parsedRows.length} items`}
+                </span>
+                <button 
+                  type="button" 
+                  onClick={() => { setParsedRows([]); setCsvFile(null); }}
+                  className="text-rose-500 hover:underline text-[10px]"
+                >
+                  {language === "ar" ? "إلغاء" : "Clear"}
+                </button>
+              </div>
+
+              {/* Preview Rows list */}
+              <div className="max-h-32 overflow-y-auto space-y-1.5 pr-1 text-start">
+                {parsedRows.map((row, index) => (
+                  <div key={index} className="bg-cardbk border border-borderline/60 rounded-lg p-2 text-[10.5px] text-txtmain flex justify-between items-center">
+                    <div className="min-w-0 flex-1 pr-1.5 text-start">
+                      <p className="font-bold truncate">{row.service}</p>
+                      <p className="text-[9.5px] text-txtmuted truncate">
+                        {row.clientName ? `${language === "ar" ? "العميل: " : "Client: "}${row.clientName}` : (language === "ar" ? "عميل عام" : "General client")}
+                      </p>
+                    </div>
+                    <div className="text-end shrink-0 font-mono">
+                      <p className="text-emerald-500 font-bold">{row.revenue.toLocaleString()} {companyCurrency}</p>
+                      <p className="text-rose-500 text-[9px]">{row.cost.toLocaleString()} {companyCurrency}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleImportSubmit}
+                disabled={importing}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-3 rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {importing ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>{language === "ar" ? "جاري الاستيراد..." : "Batch importing..."}</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>
+                      {language === "ar" 
+                        ? `بدء الاستيراد الفوري لـ ${parsedRows.length} عمليات` 
+                        : `Confirm and Import ${parsedRows.length} items`}
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

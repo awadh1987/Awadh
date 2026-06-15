@@ -12,10 +12,11 @@ import firebaseConfig from "../../firebase-applet-config.json";
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-// Configure Google OAuth Provider with Sheets & Drive scopes
+// Configure Google OAuth Provider with Sheets, Drive, & Docs scopes
 const provider = new GoogleAuthProvider();
 provider.addScope("https://www.googleapis.com/auth/spreadsheets");
 provider.addScope("https://www.googleapis.com/auth/drive.file");
+provider.addScope("https://www.googleapis.com/auth/documents");
 
 // Flag to track sign-in process
 let isSigningIn = false;

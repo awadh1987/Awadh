@@ -13,7 +13,8 @@ import {
   FolderOpen,
   Calendar,
   Sparkles,
-  Link
+  Link,
+  FileText
 } from "lucide-react";
 import { 
   initAuth, 
@@ -42,6 +43,32 @@ interface DriveFile {
   createdTime: string;
   iconLink?: string;
 }
+
+const secureFetch = async (url: string, options: any = {}) => {
+  if (url.includes("googleapis.com")) {
+    const authHeader = options.headers?.Authorization || options.headers?.authorization;
+    const body = options.body;
+    
+    const proxyHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (authHeader) {
+      proxyHeaders["Authorization"] = authHeader;
+    }
+
+    const response = await fetch("/api/google-proxy", {
+      method: "POST",
+      headers: proxyHeaders,
+      body: JSON.stringify({
+        url,
+        method: options.method || "GET",
+        body: body ? (typeof body === "string" ? JSON.parse(body) : body) : null
+      })
+    });
+    return response;
+  }
+  return fetch(url, options);
+};
 
 export default function GoogleSync({
   selectedCompanyId,
@@ -77,6 +104,19 @@ export default function GoogleSync({
 
   // Expenses for the current company needed for full sheet integration
   const [expenses, setExpenses] = useState<Expense[]>([]);
+
+  // Integration sub-tabs switcher
+  const [activeSyncTab, setActiveSyncTab] = useState<"sheets" | "docs">("sheets");
+
+  // Google Docs integrated states
+  const [docsFiles, setDocsFiles] = useState<DriveFile[]>([]);
+  const [loadingDocs, setLoadingDocs] = useState(false);
+  const [generatingDoc, setGeneratingDoc] = useState(false);
+  const [selectedOpIdForDoc, setSelectedOpIdForDoc] = useState<string>("");
+  const [docTemplateType, setDocTemplateType] = useState<"contract" | "nda" | "invoice">("contract");
+  const [docStatusMsg, setDocStatusMsg] = useState("");
+  const [docSyncStatus, setDocSyncStatus] = useState<"idle" | "success" | "error">("idle");
+  const [generatedDocLink, setGeneratedDocLink] = useState<string | null>(null);
 
   // Helper to resolve month keys and clean display names in multi-language context
   const getMonthKeyAndName = React.useCallback((dateStr: string) => {
@@ -237,7 +277,11 @@ export default function GoogleSync({
   // Sync / load files whenever token is available
   useEffect(() => {
     if (token) {
-      fetchSpreadsheets();
+      if (activeSyncTab === "docs") {
+        fetchDocs();
+      } else {
+        fetchSpreadsheets();
+      }
       // Load saved spreadsheet from localStorage if any
       const savedId = localStorage.getItem(`erp_sync_sheet_id_${selectedCompanyId}`);
       const savedName = localStorage.getItem(`erp_sync_sheet_name_${selectedCompanyId}`);
@@ -250,9 +294,10 @@ export default function GoogleSync({
       }
     } else {
       setDriveFiles([]);
+      setDocsFiles([]);
       setLastSyncedSheet(null);
     }
-  }, [token, selectedCompanyId]);
+  }, [token, selectedCompanyId, activeSyncTab]);
 
   // Automatic background synchronization trigger on data change
   useEffect(() => {
@@ -320,7 +365,7 @@ export default function GoogleSync({
       const q = encodeURIComponent("mimeType='application/vnd.google-apps.spreadsheet' and name contains 'ERP' and trashed = false");
       const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,webViewLink,createdTime)&orderBy=createdTime desc&pageSize=10`;
       
-      const res = await fetch(url, {
+      const res = await secureFetch(url, {
         headers: { Authorization: `Bearer ${activeToken}` }
       });
       if (res.ok) {
@@ -331,6 +376,195 @@ export default function GoogleSync({
       console.error("Failed to query files from Google Drive:", err);
     } finally {
       setLoadingFiles(false);
+    }
+  };
+
+  // Fetch created documents from user's Drive folder matching "نظام ERP"
+  const fetchDocs = async () => {
+    const activeToken = token || (await getAccessToken());
+    if (!activeToken) return;
+
+    setLoadingDocs(true);
+    try {
+      // Query search criteria: only documents (mimeType) and name contains "ERP"
+      const q = encodeURIComponent("mimeType='application/vnd.google-apps.document' and name contains 'ERP' and trashed = false");
+      const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,webViewLink,createdTime)&orderBy=createdTime desc&pageSize=10`;
+      
+      const res = await secureFetch(url, {
+        headers: { Authorization: `Bearer ${activeToken}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDocsFiles(data.files || []);
+      }
+    } catch (err) {
+      console.error("Failed to query doc files from Google Drive:", err);
+    } finally {
+      setLoadingDocs(false);
+    }
+  };
+
+  // Google Docs contract builder operation
+  const handleGenerateDoc = async () => {
+    const activeToken = token || (await getAccessToken());
+    if (!activeToken) {
+      setNeedsAuth(true);
+      return;
+    }
+
+    if (!selectedOpIdForDoc) {
+      setDocSyncStatus("error");
+      setDocStatusMsg(language === "ar" ? "يرجى تحديد عملية تشغيلية أولاً لتوليد عقدها." : "Please select an active operation first.");
+      return;
+    }
+
+    setGeneratingDoc(true);
+    setDocSyncStatus("idle");
+    setDocStatusMsg("");
+    setGeneratedDocLink(null);
+
+    const companyName = currentCompany?.name || "المنشأة الحالية";
+    const selectedOp = operations.find(o => o.id === selectedOpIdForDoc);
+    const clientName = clients.find(c => c.id === selectedOp?.client_id)?.name || (language === "ar" ? "عميل معتمد" : "Registered Client");
+
+    try {
+      setDocStatusMsg(language === "ar" ? "جاري إنشاء المستند في Google Docs..." : "Provisioning contract file container on Google Docs...");
+
+      const templateName = 
+        docTemplateType === "contract" ? (language === "ar" ? "اتفاقية تقديم خدمات" : "Service Contract") :
+        docTemplateType === "nda" ? (language === "ar" ? "عقد اتفاقية سرية معلومات" : "Non-Disclosure Agreement") :
+        (language === "ar" ? "مسودة تسوية مالية وإيصال مالي" : "Financial Settlement Slip");
+
+      const docTitle = `نظام ERP - ${templateName} - ${clientName}`;
+
+      // 1. Create Doc
+      const createRes = await secureFetch("https://docs.googleapis.com/v1/documents", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${activeToken}`
+        },
+        body: JSON.stringify({
+          title: docTitle
+        })
+      });
+
+      if (!createRes.ok) throw new Error("تعذر إنشاء مستند وورد مستهدف");
+      const docData = await createRes.json();
+      const documentId = docData.documentId;
+      const webViewLink = `https://docs.google.com/document/d/${documentId}/edit`;
+
+      // 2. Prepare rich RTL legal-ready template text
+      setDocStatusMsg(language === "ar" ? "جاري كتابة وتنسيق نصوص الاتفاقية الرسمية وسندات الالتزام..." : "Structuring corporate bylaws and clauses inside document body...");
+
+      const opService = selectedOp?.service || "—";
+      const opRevenue = Number(selectedOp?.revenue || 0).toLocaleString();
+      const opCost = Number(selectedOp?.cost || 0).toLocaleString();
+      const opProfit = Number((selectedOp?.revenue || 0) - (selectedOp?.cost || 0)).toLocaleString();
+      const opDate = selectedOp?.date || "—";
+      const vatStr = (currentCompany as any)?.vat_id || "غير محدد";
+      const currency = companyCurrency || "ر.س";
+
+      const textBody = `========================================================================
+${docTitle.toUpperCase()}
+========================================================================
+
+تاريخ التصدير التوقيتي: ${new Date().toLocaleString(language === "ar" ? "ar-SA" : "en-US")}
+نظام الإصدار المالي: نظام الإدارة المالية والعمليات المتكامل ERP (SaaS ERP Suite)
+
+------------------------------------------------------------------------
+مقدمة وأطراف الاتفاقية التجارية:
+الطرف الأول (مزود الخدمة والمنشأة المشغلة للـ ERP):
+- الاسم التجاري: ${companyName}
+- الرقم الضريبي الموثق: ${vatStr}
+
+الطرف الثاني (العميل المستلم للباقة والخدمات):
+- الاسم الكامل للعميل: ${clientName}
+- الجهة / المؤسسة التابعة: ${clients.find(c => c.id === selectedOp?.client_id)?.company || "—"}
+- رقم الجوال المرتبط: ${clients.find(c => c.id === selectedOp?.client_id)?.phone || "—"}
+
+------------------------------------------------------------------------
+تفاصيل الخدمة والعملية التشغيلية المرتبطة:
+- البيان والخدمة المتفق عليها: ${opService}
+- تاريخ توثيق وحيازة الخدمة: ${opDate}
+- القيمة التعاقدية الشاملة الضريبة: ${opRevenue} ${currency}
+- التكلفة التشغيلية المباشرة المخصصة: ${opCost} ${currency}
+- صافي ربحية العقد التشغيلي: ${opProfit} ${currency}
+
+------------------------------------------------------------------------
+بنود الاتفاقية والشروط الملزمة للتسوية والخصوصية:
+1. يلتزم الطرف الأول بكافة البنود الفنية والالتزام بجودة ومعيار لتنفيذ عملية لـ [${opService}].
+2. يلتزم الطرف الثاني بسداد القيمة المالية المقررة والمصدرة بالفواتير الرسمية في أوان استحقاقها.
+3. يحمي الطرفان سرية البيانات الفنية والمحاسبية المتبادلة بموجب القوانين ذات العلاقة ولا يجوز تسريب بنود الأرباح.
+4. يعتبر إنشاء هذا المستند بمثابة صك التزام إلكتروني يتم الرجوع إليه ومطابقته رقمياً.
+
+توقيع الممثل المفوض لـ (الطرف الأول):
+- الاسم الكريم: ________________________
+- التوقيع اليدوي / الختم: ________________________
+
+توقيع العميل المستلم (الطرف الثاني):
+- الاسم والترقية: ________________________
+- التوقيع والاعتماد: ________________________
+
+========================================================================
+صُنعت وصُدّرت رقمياً سحابة Google Docs بنظام ERP للأعمال بالمعيار الضريبي الذكي.
+`;
+
+      // 3. BatchUpdate to insert the generated text into Google Doc at index 1
+      const updateRes = await secureFetch(`https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${activeToken}`
+        },
+        body: JSON.stringify({
+          requests: [
+            {
+              insertText: {
+                location: { index: 1 },
+                text: textBody
+              }
+            }
+          ]
+        })
+      });
+
+      if (!updateRes.ok) throw new Error("تعذر إدراج نصوص صياغة العقد بالدوكس");
+
+      setDocSyncStatus("success");
+      setDocStatusMsg(language === "ar" ? "تم بنجاح توليد وصناعة العقد وحفظه بذاكرة Google Docs والـ Drive!" : "Contract generated and committed to Google Docs successfully!");
+      setGeneratedDocLink(webViewLink);
+
+      // Audit log posting
+      try {
+        await fetch("/api/audit-logs", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-company-id": selectedCompanyId
+          },
+          body: JSON.stringify({
+            action: language === "ar" ? "توليد مستند قوقل" : "Google Doc Created",
+            details: language === "ar" 
+              ? `تم توليد مستند "${templateName}" بنجاح للعميل "${clientName}" ببيانات الخدمة "${opService}".`
+              : `Successfully generated Google Doc contract for client "${clientName}" and service "${opService}".`,
+            user: user?.email || "awadh.a.1987@gmail.com"
+          })
+        });
+        onRefreshStats();
+      } catch (auditErr) {
+        console.error("Failed to post audit log for Google Doc creation:", auditErr);
+      }
+
+      // Refresh Docs list
+      fetchDocs();
+
+    } catch (err: any) {
+      console.error(err);
+      setDocSyncStatus("error");
+      setDocStatusMsg(language === "ar" ? "حدثت مشكلة أثناء كتابة وتوليد مستند قوقل دوكس." : "Errors encountered during rendering of Google Docs templates.");
+    } finally {
+      setGeneratingDoc(false);
     }
   };
 
@@ -376,7 +610,7 @@ export default function GoogleSync({
       if (isNew || !targetSpreadsheetId) {
         setStatusMsg(language === "ar" ? "جاري إنشاء مستند جديد على Google Sheets..." : "Creating a fresh template on Google Sheets...");
         
-        const createRes = await fetch("https://sheets.googleapis.com/v4/spreadsheets", {
+        const createRes = await secureFetch("https://sheets.googleapis.com/v4/spreadsheets", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -407,7 +641,7 @@ export default function GoogleSync({
       // Step 2: Clear old cell ranges if we are updating (to prevent ghost leftovers)
       if (!isNew && lastSyncedSheet?.id) {
         setStatusMsg(language === "ar" ? "جاري تهيئة ومسح الحقول السابقة..." : "Clearing stale cells to push clean records...");
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${targetSpreadsheetId}/values:batchClear`, {
+        await secureFetch(`https://sheets.googleapis.com/v4/spreadsheets/${targetSpreadsheetId}/values:batchClear`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -533,7 +767,7 @@ export default function GoogleSync({
       ];
 
       // Batch update fetch
-      const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${targetSpreadsheetId}/values:batchUpdate`, {
+      const updateRes = await secureFetch(`https://sheets.googleapis.com/v4/spreadsheets/${targetSpreadsheetId}/values:batchUpdate`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -658,7 +892,27 @@ export default function GoogleSync({
       ) : (
         /* Authorized State Block layout */
         <div className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Sub-Tabs switcher */}
+          <div className="flex bg-slate-100 dark:bg-slate-900/50 p-1 rounded-xl border border-borderline max-w-md">
+            <button
+              onClick={() => setActiveSyncTab("sheets")}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${activeSyncTab === "sheets" ? "bg-indigo-600 text-white shadow shadow-indigo-500/10 font-black text-xs" : "text-slate-500 dark:text-slate-400 hover:text-indigo-600 font-bold"}`}
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>{language === "ar" ? "جداول قوقل (Google Sheets)" : "Google Sheets Sync"}</span>
+            </button>
+            <button
+              onClick={() => setActiveSyncTab("docs")}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${activeSyncTab === "docs" ? "bg-indigo-600 text-white shadow shadow-indigo-500/10 font-black text-xs" : "text-slate-500 dark:text-slate-400 hover:text-indigo-600 font-bold"}`}
+            >
+              <FileText className="w-4 h-4" />
+              <span>{language === "ar" ? "مستندات قوقل ومولد العقود" : "Google Docs & Contracts"}</span>
+            </button>
+          </div>
+
+          {activeSyncTab === "sheets" ? (
+            <>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* User Account Details & General Sync Control */}
           <div className="lg:col-span-1 space-y-6">
             {/* Authenticated credentials card */}
@@ -1046,7 +1300,251 @@ export default function GoogleSync({
             </div>
           )}
         </div>
-      </div>
+      </>
+    ) : (
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
+              {/* Left Column: Generator Form */}
+              <div className="lg:col-span-1 space-y-6">
+                <div className="bg-cardbk rounded-2xl border border-borderline p-6 space-y-5 text-start">
+                  <div className="flex items-center gap-2 border-b border-borderline pb-3">
+                    <Sparkles className="w-5 h-5 text-indigo-500" />
+                    <h3 className="font-bold text-sm text-txtmain">
+                      {language === "ar" ? "مولد العقود والاتفاقيات الذكي" : "Smart Contract Builder"}
+                    </h3>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Select active op */}
+                    <div>
+                      <label className="block text-xs font-bold text-txtmain mb-1.5">
+                        {language === "ar" ? "العملية التشغيلية المرتبطة *" : "Linked Operational Task *"}
+                      </label>
+                      <select
+                        value={selectedOpIdForDoc}
+                        onChange={(e) => setSelectedOpIdForDoc(e.target.value)}
+                        className="w-full text-xs p-2.5 bg-appbk border border-borderline rounded-xl focus:border-indigo-500 focus:outline-none"
+                      >
+                        <option value="">{language === "ar" ? "اختر عملية لسحب البيانات..." : "Select an operation..."}</option>
+                        {operations.map((op) => {
+                          const client = clients.find(c => c.id === op.client_id);
+                          return (
+                            <option key={op.id} value={op.id}>
+                              {op.service} ({client?.name || "عميل غير محدد"})
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <p className="text-[10px] text-txtmuted mt-1 leading-normal">
+                        {language === "ar" 
+                          ? "يسحب المولد تلقائياً اسم العميل والخدمة والماليات والضرائب لصياغة العقد المستهدف."
+                          : "Generates custom contract text dynamically using client name, totals, and VAT inputs."}
+                      </p>
+                    </div>
+
+                    {/* Template Selection */}
+                    <div>
+                      <label className="block text-xs font-bold text-txtmain mb-1.5">
+                        {language === "ar" ? "نوع ونموذج قالب المستند *" : "Contract Template Type *"}
+                      </label>
+                      <div className="grid grid-cols-1 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setDocTemplateType("contract")}
+                          className={`p-3 text-start border rounded-xl transition-all flex flex-col gap-1 cursor-pointer ${docTemplateType === "contract" ? "border-indigo-500 bg-indigo-500/5" : "border-borderline hover:bg-borderline/15"}`}
+                        >
+                          <span className="text-xs font-bold text-txtmain">
+                            📄 {language === "ar" ? "اتفاقية تقديم خدمات (SLA)" : "Service Level Agreement (SLA)"}
+                          </span>
+                          <span className="text-[10px] text-txtmuted leading-normal">
+                            {language === "ar" 
+                              ? "صيغة قانونية رسمية ملزمة للأطراف بحسب قيمة الأتعاب والخدمات المسجلة."
+                              : "Official legal binding provisions based on operational revenue metrics."}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setDocTemplateType("nda")}
+                          className={`p-3 text-start border rounded-xl transition-all flex flex-col gap-1 cursor-pointer ${docTemplateType === "nda" ? "border-indigo-500 bg-indigo-500/5" : "border-borderline hover:bg-borderline/15"}`}
+                        >
+                          <span className="text-xs font-bold text-txtmain">
+                            🔒 {language === "ar" ? "اتفاقية عدم الإفصاح وسرية المعلومات (NDA)" : "Non-Disclosure Agreement (NDA)"}
+                          </span>
+                          <span className="text-[10px] text-txtmuted leading-normal">
+                            {language === "ar" 
+                              ? "اتفاقية لحماية التفاصيل الأمنية وشروط التعاون المتبادل وسرية الأرقام."
+                              : "Comprehensive secrecy pact containing corporate values and liability terms."}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setDocTemplateType("invoice")}
+                          className={`p-3 text-start border rounded-xl transition-all flex flex-col gap-1 cursor-pointer ${docTemplateType === "invoice" ? "border-indigo-500 bg-indigo-500/5" : "border-borderline hover:bg-borderline/15"}`}
+                        >
+                          <span className="text-xs font-bold text-txtmain">
+                            💰 {language === "ar" ? "سند تسوية وإثبات استحقاق مالي" : "Financial Settlement Slip"}
+                          </span>
+                          <span className="text-[10px] text-txtmuted leading-normal">
+                            {language === "ar" 
+                              ? "مستند لإقرار الأرصدة والربحية الصافية والاعتماد المحاسبي الداخلي للأعمال."
+                              : "Financial ledger confirmation for internal auditing and partner accounting."}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Trigger btn */}
+                    <button
+                      onClick={handleGenerateDoc}
+                      disabled={generatingDoc}
+                      className="w-full cursor-pointer py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow bg-indigo-500/10 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {generatingDoc ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>{language === "ar" ? "جاري البناء والتنسيق السحابي..." : "Formatting Cloud Template..."}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4" />
+                          <span>{language === "ar" ? "توليد المستند في قوقل دوكس ✍️" : "Generate Google Doc ✍️"}</span>
+                        </>
+                      )}
+                    </button>
+
+                    {/* Feedback messages */}
+                    {docStatusMsg && (
+                      <div className={`p-3.5 rounded-xl border text-xs leading-relaxed flex items-start gap-2 ${
+                        docSyncStatus === "success" 
+                          ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400" 
+                          : docSyncStatus === "error"
+                            ? "bg-rose-500/10 border-rose-500/20 text-rose-500"
+                            : "bg-slate-500/10 border-slate-500/20 text-txtmuted"
+                      }`}>
+                        {docSyncStatus === "success" ? <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-emerald-500" /> : <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />}
+                        <div>{docStatusMsg}</div>
+                      </div>
+                    )}
+
+                    {/* Open link highlight */}
+                    {generatedDocLink && (
+                      <a
+                        href={generatedDocLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="animate-bounce flex items-center justify-center gap-2 p-3 bg-emerald-500 text-white rounded-xl text-xs font-black hover:bg-emerald-600 transition-colors uppercase cursor-pointer shadow-lg shadow-emerald-500/20"
+                      >
+                        <span>{language === "ar" ? "فتح مستند قوقل الآن ↗️" : "Open Google Doc Now ↗️"}</span>
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Google Docs Explorer */}
+              <div className="lg:col-span-2 space-y-4">
+                <div className="bg-cardbk rounded-2xl border border-borderline p-6 space-y-4 text-start">
+                  <div className="flex justify-between items-center border-b border-borderline pb-3">
+                    <div className="flex items-center gap-2">
+                      <FolderOpen className="w-5 h-5 text-amber-500" />
+                      <h3 className="font-bold text-sm text-txtmain">
+                        {language === "ar" ? "مجلد مسودات وعقود الـ ERP السحابية" : "Cloud ERP Document Registry"}
+                      </h3>
+                    </div>
+
+                    <button
+                      onClick={fetchDocs}
+                      disabled={loadingDocs}
+                      title={language === "ar" ? "تحديث قائمة المستندات" : "Refresh files catalog"}
+                      className="p-1 px-2.5 text-[11px] font-bold border border-borderline bg-appbk hover:bg-borderline/30 rounded-lg text-txtmuted transition-all disabled:opacity-50 flex items-center gap-1 shrink-0"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${loadingDocs ? "animate-spin" : ""}`} />
+                      <span>{language === "ar" ? "تحديث السجل" : "Sync Registry"}</span>
+                    </button>
+                  </div>
+
+                  <p className="text-[11px] text-txtmuted leading-relaxed">
+                    {language === "ar"
+                      ? "تسرد هذه اللوحة كافة مسودات العقود والوثائق التي تم توليدها وتحديثها آلياً عبر حسابك على ذمة نظام الـ ERP الحالي. يمكنك تصفح وتحرير الملفات مباشرة بلحظة واحدة."
+                      : "The list records verified Google Documents generated inside your secure workspace. Click Open to proceed with direct web-based text customizations."}
+                  </p>
+
+                  {loadingDocs ? (
+                    <div className="py-12 flex flex-col items-center justify-center text-slate-400 gap-3">
+                      <div className="w-8 h-8 border-3 border-slate-200 border-t-indigo-600 rounded-full animate-spin" />
+                      <p className="text-xs font-medium">{t("loading")}</p>
+                    </div>
+                  ) : docsFiles.length === 0 ? (
+                    <div className="py-12 border border-dashed border-borderline rounded-xl flex flex-col items-center justify-center text-txtmuted text-center p-4">
+                      <FileText className="w-12 h-12 text-slate-300 dark:text-slate-700 mb-2.5" />
+                      <h4 className="font-bold text-xs text-txtmain">{language === "ar" ? "لا تتوفر عقود سحابة حالياً" : "Empty Registry Folder"}</h4>
+                      <p className="text-[11px] text-txtmuted mt-1 max-w-xs">
+                        {language === "ar" ? "حدد عملية تشغيلية بالعمود المقابل ثم انقر على (توليد المستند) لإنشاء باكورة اتفاقياتك السحابية الموثقة." : "Log parameters and compile draft agreements using the Smart Contract Builder."}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-borderline border border-borderline rounded-xl overflow-hidden bg-appbk">
+                      {docsFiles.map((file) => (
+                        <div 
+                          key={file.id} 
+                          className="p-3.5 flex items-center justify-between hover:bg-borderline/10 transition-colors"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0 border border-blue-500/20">
+                              <FileText className="w-4 h-4 text-indigo-500" />
+                            </div>
+                            <div className="min-w-0">
+                              <h4 className="font-black text-xs text-txtmain truncate" title={file.name}>
+                                {file.name}
+                              </h4>
+                              <p className="text-[10px] text-txtmuted font-mono mt-0.5">
+                                {language === "ar" ? "تاريخ الحفظ: " : "Saved: "} {new Date(file.createdTime).toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", {
+                                  year: "numeric",
+                                  month: "short",
+                                  day: "numeric"
+                                })}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <a 
+                              href={file.webViewLink} 
+                              target="_blank" 
+                              rel="noreferrer"
+                              title={language === "ar" ? "فتح مستند قوقل دوكس" : "View Document"}
+                              className="p-1.5 px-3 bg-cardbk border border-borderline hover:bg-borderline/30 rounded-lg text-txtmain flex items-center gap-1 text-[11px] font-bold animate-pulse hover:animate-none"
+                            >
+                              <span>{language === "ar" ? "مراجعة وتحرير" : "Open Edit"}</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Secure Trust disclaimer */}
+                <div className="bg-sky-50 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900/30 rounded-2xl p-4 flex gap-3 text-start">
+                  <Database className="w-5 h-5 text-sky-500 shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <h4 className="font-bold text-sky-800 dark:text-sky-300">
+                      {language === "ar" ? "تأمين معالجة المستندات ومعيار التشفير المعتمد" : "GDPR Docs Trust Compliancy"}
+                    </h4>
+                    <p className="text-sky-700/85 dark:text-sky-400/85 mt-1 leading-relaxed">
+                      {language === "ar"
+                        ? "نظام صياغة العقود المتكامل يتعامل بحذر مع مستنداتك السحابية. لا يتم الكشف عن الـ Tokens لخوادم وسيطة بل يدرج المستند بموجب معزل آمن في نطاق حسابك المالي المرفّع."
+                        : "The secure Docs interface leverages certified Google scopes. Tokens are processed locally and destroyed upon logout, guarding metadata leaks cleanly."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

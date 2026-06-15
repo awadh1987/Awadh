@@ -12,10 +12,18 @@ import {
   CheckCircle2, 
   Clock, 
   Briefcase,
-  GripVertical
+  GripVertical,
+  Sliders,
+  RotateCcw,
+  ArrowLeft,
+  ArrowRight,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import { useLanguage } from "../lib/LanguageContext";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 interface DashboardProps {
   stats: DashboardStats;
@@ -135,6 +143,16 @@ export default function Dashboard({
   });
 
   const [draggedIdx, setDraggedIdx] = React.useState<number | null>(null);
+  const [customizeOpen, setCustomizeOpen] = React.useState(false);
+  
+  const [visibleWidgets, setVisibleWidgets] = React.useState<{ [key: string]: boolean }>(() => {
+    try {
+      const saved = localStorage.getItem("visible_dashboard_metrics");
+      return saved ? JSON.parse(saved) : { revenue: true, costs: true, net_profit: true, profit_margin: true };
+    } catch {
+      return { revenue: true, costs: true, net_profit: true, profit_margin: true };
+    }
+  });
 
   React.useEffect(() => {
     if (widgetOrder && widgetOrder.trim()) {
@@ -143,6 +161,91 @@ export default function Dashboard({
       setOrder(["revenue", "costs", "net_profit", "profit_margin"]);
     }
   }, [widgetOrder]);
+
+  const toggleWidgetVisibility = (widgetId: string) => {
+    const updated = { ...visibleWidgets, [widgetId]: !visibleWidgets[widgetId] };
+    setVisibleWidgets(updated);
+    try {
+      localStorage.setItem("visible_dashboard_metrics", JSON.stringify(updated));
+    } catch (e) {
+      console.warn("Storage write blocked:", e);
+    }
+  };
+
+  const handleArrowMove = async (index: number, direction: "left" | "right") => {
+    const items = [...order];
+    if (direction === "left") {
+      if (index === 0) return;
+      const prevVal = items[index - 1];
+      items[index - 1] = items[index];
+      items[index] = prevVal;
+    } else {
+      if (index === items.length - 1) return;
+      const nextVal = items[index + 1];
+      items[index + 1] = items[index];
+      items[index] = nextVal;
+    }
+    setOrder(items);
+
+    if (currentCompany && onUpdateCompany) {
+      try {
+        const orderStr = items.join(",");
+        const res = await fetch(`/api/companies/${currentCompany.id}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            name: currentCompany.name,
+            logo_url: currentCompany.logo_url || "",
+            primary_color: currentCompany.primary_color || "",
+            currency: currentCompany.currency || "ر.س",
+            widget_order: orderStr
+          })
+        });
+        if (res.ok) {
+          const updated: Company = await res.json();
+          onUpdateCompany(updated);
+        }
+      } catch (err) {
+        console.warn("Failed to update widget order via arrows:", err);
+      }
+    }
+  };
+
+  const resetWidgetsToDefault = async () => {
+    const defaultOrder = ["revenue", "costs", "net_profit", "profit_margin"];
+    const allVisible = { revenue: true, costs: true, net_profit: true, profit_margin: true };
+    setOrder(defaultOrder);
+    setVisibleWidgets(allVisible);
+    try {
+      localStorage.setItem("visible_dashboard_metrics", JSON.stringify(allVisible));
+    } catch {}
+
+    if (currentCompany && onUpdateCompany) {
+      try {
+        const res = await fetch(`/api/companies/${currentCompany.id}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            name: currentCompany.name,
+            logo_url: currentCompany.logo_url || "",
+            primary_color: currentCompany.primary_color || "",
+            currency: currentCompany.currency || "ر.س",
+            widget_order: "revenue,costs,net_profit,profit_margin"
+          })
+        });
+        if (res.ok) {
+          const updated: Company = await res.json();
+          onUpdateCompany(updated);
+        }
+      } catch (err) {
+        console.warn("Failed to reset widget order on DB:", err);
+      }
+    }
+  };
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIdx(index);
@@ -190,7 +293,7 @@ export default function Dashboard({
     }
   };
 
-  const widgetList = order;
+  const widgetList = order.filter(widgetId => visibleWidgets[widgetId] !== false);
 
   const renderKpiWidget = (widgetId: string) => {
     switch (widgetId) {
@@ -283,8 +386,8 @@ export default function Dashboard({
             <p className="text-[11px] text-indigo-500 dark:text-indigo-400 font-medium flex items-center gap-1">
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-indigo-400 animate-pulse" />
               {language === "ar" 
-                ? "يمكنك ترتيب مربعات الأداء مباشرة عبر السحب والإفلات!" 
-                : "Drag and drop any KPI summary card below to custom index directly!"}
+                ? "يمكنك ترتيب مربعات الأداء بالسحب والإفلات أو تخصيصها عبر لوحة التحكم!" 
+                : "Drag/drop widgets or customize them from the settings block below!"}
             </p>
           </div>
         </div>
@@ -294,29 +397,147 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {widgetList.map((widgetId, index) => (
-          <div
-            key={widgetId}
-            draggable
-            onDragStart={(e) => handleDragStart(e, index)}
-            onDragOver={(e) => handleDragOver(e, index)}
-            onDragEnd={handleDragEnd}
-            className={`relative group transition-all duration-200 cursor-grab active:cursor-grabbing hover:scale-[1.01] hover:shadow-md rounded-2xl ${
-              draggedIdx === index 
-                ? "opacity-30 border-2 border-dashed border-indigo-500 scale-95" 
-                : ""
-            }`}
+      {/* Widget Customizer Control Panel */}
+      <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl border border-slate-200/65 dark:border-slate-800/80 transition-all">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <button 
+            onClick={() => setCustomizeOpen(!customizeOpen)}
+            className="flex items-center gap-2 bg-white dark:bg-slate-800 px-3.5 py-2 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 shadow-xs border border-slate-200/80 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750 transition cursor-pointer"
           >
-            {/* Grip handle indicator appearing beautifully on hover */}
-            <div className={`absolute top-3 ${language === "ar" ? "left-3" : "right-3"} opacity-0 group-hover:opacity-60 duration-200 text-txtmuted pointer-events-none z-10`}>
-              <GripVertical className="w-4 h-4" />
+            <Sliders className="w-3.5 h-3.5 text-indigo-500" />
+            <span>{language === "ar" ? "تخصيص ترتيب وظهور المربعات" : "Customize Widget Layout & Presence"}</span>
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${customizeOpen ? "rotate-180" : ""}`} />
+          </button>
+
+          <button 
+            type="button"
+            onClick={resetWidgetsToDefault}
+            className="flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>{language === "ar" ? "إعادة تعيين للمظهر الافتراضي" : "Reset Layout to Defaults"}</span>
+          </button>
+        </div>
+
+        {customizeOpen && (
+          <div className="mt-4 pt-4 border-t border-slate-200/60 dark:border-slate-800 space-y-4">
+            <div>
+              <h4 className="text-xs font-bold text-txtmain mb-1.5">{language === "ar" ? "1. حدد مربعات الأداء النشطة لتظهر أو تختفي:" : "1. Toggle Active KPI Widgets:"}</h4>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { id: "revenue", label: language === "ar" ? "إجمالي الإيرادات" : "Total Revenue" },
+                  { id: "costs", label: language === "ar" ? "إجمالي التكاليف" : "Total Costs" },
+                  { id: "net_profit", label: language === "ar" ? "صافي الأرباح" : "Net Profit" },
+                  { id: "profit_margin", label: language === "ar" ? "هامش التشغيل" : "Operating Margin" },
+                ].map((item) => {
+                  const isActive = visibleWidgets[item.id] !== false;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => toggleWidgetVisibility(item.id)}
+                      className={`flex items-center gap-2 p-2 rounded-xl border text-xs font-semibold justify-between transition cursor-pointer ${
+                        isActive 
+                          ? "bg-indigo-50/70 border-indigo-200 text-indigo-700 dark:bg-indigo-950/20 dark:border-indigo-900/50 dark:text-indigo-300"
+                          : "bg-white border-slate-200 text-slate-400 dark:bg-slate-800 dark:border-slate-700"
+                      }`}
+                    >
+                      <span>{item.label}</span>
+                      {isActive ? (
+                        <Eye className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                      ) : (
+                        <EyeOff className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            {renderKpiWidget(widgetId)}
+
+            <div>
+              <h4 className="text-xs font-bold text-txtmain mb-1.5">
+                {language === "ar" ? "2. التحكم بالترتيب الحالي للودجات (اسحب وأفلت المربعات أو اضغط الأسهم للترتيب الفوري):" : "2. Set sequence order (Drag directly or tap arrow button controls):"}
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {order.map((widgetId, index) => {
+                  const label = widgetId === "revenue" ? (language === "ar" ? "إجمالي الإيرادات" : "Total Revenue")
+                    : widgetId === "costs" ? (language === "ar" ? "إجمالي التكاليف" : "Total Costs")
+                    : widgetId === "net_profit" ? (language === "ar" ? "صافي الأرباح" : "Net Profit")
+                    : (language === "ar" ? "هامش التشغيل" : "Operating Margin");
+                  const isVisible = visibleWidgets[widgetId] !== false;
+
+                  return (
+                    <div 
+                      key={widgetId}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-medium ${
+                        isVisible 
+                          ? "bg-white border-slate-250 text-slate-800 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200"
+                          : "bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800/40 dark:border-slate-800 dark:text-slate-500 line-through"
+                      }`}
+                    >
+                      <GripVertical className="w-3.5 h-3.5 text-slate-400 cursor-move shrink-0" />
+                      <span className="truncate max-w-[120px]">{label}</span>
+                      
+                      <div className="flex items-center gap-0.5 border-r border-slate-205 dark:border-slate-700 pr-1.5 mr-0.5">
+                        <button
+                          type="button"
+                          disabled={index === 0}
+                          onClick={() => handleArrowMove(index, "left")}
+                          className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md text-slate-400 hover:text-slate-600 disabled:opacity-30 cursor-pointer"
+                          title={language === "ar" ? "تحريك لليمين" : "Move Left"}
+                        >
+                          <ArrowRight className="w-3 h-3 rotate-180 rtl:rotate-0" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={index === order.length - 1}
+                          onClick={() => handleArrowMove(index, "right")}
+                          className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md text-slate-400 hover:text-slate-600 disabled:opacity-30 cursor-pointer"
+                          title={language === "ar" ? "تحريك لليسار" : "Move Right"}
+                        >
+                          <ArrowLeft className="w-3 h-3 rotate-180 rtl:rotate-0" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
-        ))}
+        )}
       </div>
+
+      {/* KPI Cards Grid */}
+      {widgetList.length === 0 ? (
+        <div className="bg-slate-50 dark:bg-slate-900/40 border border-dashed border-slate-200 dark:border-slate-800 p-8 rounded-2xl text-center">
+          <Sliders className="w-8 h-8 mx-auto text-slate-400 mb-2 animate-pulse" />
+          <h3 className="text-sm font-bold text-txtmain">{language === "ar" ? "جميع الودجات مخفية حالياً" : "All Widgets are Hidden"}</h3>
+          <p className="text-xs text-txtmuted mt-1">{language === "ar" ? "بإمكانك إعادة تفعيلها مجدداً عبر الضغط على تخصيص ترتيب المربعات بالأعلى." : "Toggle them back on from customization drawer above."}</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fadeIn">
+          {widgetList.map((widgetId, index) => (
+            <div
+              key={widgetId}
+              draggable
+              onDragStart={(e) => handleDragStart(e, index)}
+              onDragOver={(e) => handleDragOver(e, index)}
+              onDragEnd={handleDragEnd}
+              className={`relative group transition-all duration-200 cursor-grab active:cursor-grabbing hover:scale-[1.01] hover:shadow-md rounded-2xl ${
+                draggedIdx === index 
+                  ? "opacity-30 border-2 border-dashed border-indigo-500 scale-95" 
+                  : ""
+              }`}
+            >
+              {/* Grip handle indicator appearing beautifully on hover */}
+              <div className={`absolute top-3 ${language === "ar" ? "left-3" : "right-3"} opacity-0 group-hover:opacity-60 duration-200 text-txtmuted pointer-events-none z-10`}>
+                <GripVertical className="w-4 h-4" />
+              </div>
+              {renderKpiWidget(widgetId)}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Invoice Overview cards (Unpaid vs Paid vs Overdue Alerts) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -389,20 +610,10 @@ export default function Dashboard({
 
         <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart
+            <LineChart
               data={monthlyData}
-              margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+              margin={{ top: 15, right: 10, left: -10, bottom: 5 }}
             >
-              <defs>
-                <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={primaryColor} stopOpacity={0.25}/>
-                  <stop offset="95%" stopColor={primaryColor} stopOpacity={0.01}/>
-                </linearGradient>
-                <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.25}/>
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0.01}/>
-                </linearGradient>
-              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-borderline, #e2e8f0)" vertical={false} />
               <XAxis 
                 dataKey="month" 
@@ -436,25 +647,25 @@ export default function Dashboard({
                 }}
                 labelFormatter={(label) => `${language === "ar" ? "فترة: " : "Period: "} ${label}`}
               />
-              <Area 
+              <Line 
                 type="monotone" 
                 dataKey="revenue" 
                 stroke={primaryColor} 
-                strokeWidth={3}
-                fillOpacity={1} 
-                fill="url(#colorRevenue)" 
+                strokeWidth={3.5}
+                dot={{ r: 4, stroke: primaryColor, strokeWidth: 1.5, fill: "#fff" }}
+                activeDot={{ r: 7 }}
                 name="revenue"
               />
-              <Area 
+              <Line 
                 type="monotone" 
                 dataKey="profit" 
                 stroke="#10b981" 
-                strokeWidth={2.5}
-                fillOpacity={1} 
-                fill="url(#colorProfit)" 
+                strokeWidth={3}
+                dot={{ r: 4, stroke: "#10b981", strokeWidth: 1.5, fill: "#fff" }}
+                activeDot={{ r: 7 }}
                 name="profit"
               />
-            </AreaChart>
+            </LineChart>
           </ResponsiveContainer>
         </div>
       </div>

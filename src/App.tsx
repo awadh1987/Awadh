@@ -15,6 +15,7 @@ import {
   Sun,
   Moon,
   Settings,
+  Database,
   Coins,
   Cloud,
   Zap
@@ -22,8 +23,8 @@ import {
 import Dashboard from "./components/Dashboard";
 import Operations from "./components/Operations";
 import Clients from "./components/Clients";
-import Invoices from "./components/Invoices";
-import SettingsComponent from "./components/Settings";
+import BillingManager from "./components/BillingManager";
+import Backups from "./components/Backups";
 import Expenses from "./components/Expenses";
 import GoogleSync from "./components/GoogleSync";
 import NotificationCenter from "./components/NotificationCenter";
@@ -66,7 +67,7 @@ export default function App() {
   }, []);
 
   // Navigation Tabs state
-  const [activeTab, setActiveTab ] = useState<"dashboard" | "operations" | "clients" | "invoices" | "expenses" | "sync" | "settings" | "subscriptions">("dashboard");
+  const [activeTab, setActiveTab ] = useState<"dashboard" | "operations" | "clients" | "invoices" | "expenses" | "sync" | "subscriptions" | "backups">("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Dark mode state
@@ -484,7 +485,7 @@ export default function App() {
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all text-start ${activeTab === "invoices" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-bold" : "hover:bg-slate-800/50 hover:text-white"}`}
               >
                 <FileText className="w-4 h-4" />
-                <span>{t("tab_invoices")}</span>
+                <span>{t("tab_billing_manager")}</span>
               </button>
 
               <button
@@ -504,19 +505,19 @@ export default function App() {
               </button>
 
               <button
+                onClick={() => { setActiveTab("backups"); setSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all text-start ${activeTab === "backups" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-bold" : "hover:bg-slate-800/50 hover:text-white"}`}
+              >
+                <Database className="w-4 h-4" />
+                <span>{t("tab_backups")}</span>
+              </button>
+
+              <button
                 onClick={() => { setActiveTab("subscriptions"); setSidebarOpen(false); }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all text-start ${activeTab === "subscriptions" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-bold" : "hover:bg-slate-800/50 hover:text-white"}`}
               >
                 <Zap className="w-4 h-4 text-amber-500 animate-pulse" />
                 <span>{t("tab_subscriptions")}</span>
-              </button>
-
-              <button
-                onClick={() => { setActiveTab("settings"); setSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all text-start ${activeTab === "settings" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10 font-bold" : "hover:bg-slate-800/50 hover:text-white"}`}
-              >
-                <Settings className="w-4 h-4" />
-                <span>{t("tab_settings")}</span>
               </button>
             </nav>
           </div>
@@ -748,12 +749,15 @@ export default function App() {
                 )}
 
                 {activeTab === "invoices" && (
-                  <Invoices 
+                  <BillingManager 
                     invoices={invoices} 
                     clients={clients} 
                     operations={operations}
                     currentCompany={companies.find(c => c.id === selectedCompanyId) || null}
                     onToggleInvoice={handleToggleInvoice} 
+                    onUpdateCompany={(updatedCompany) => {
+                      setCompanies(companies.map(c => c.id === updatedCompany.id ? updatedCompany : c));
+                    }}
                   />
                 )}
 
@@ -778,12 +782,9 @@ export default function App() {
                   />
                 </div>
 
-                {activeTab === "settings" && (
-                  <SettingsComponent 
+                {activeTab === "backups" && (
+                  <Backups 
                     company={companies.find(c => c.id === selectedCompanyId) || null}
-                    onUpdateCompany={(updatedCompany) => {
-                      setCompanies(companies.map(c => c.id === updatedCompany.id ? updatedCompany : c));
-                    }}
                   />
                 )}
 

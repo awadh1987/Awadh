@@ -16,7 +16,7 @@ function getDb() {
     }
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     const app = getApps().length === 0 ? initializeApp(config) : getApp();
-    dbInstance = getFirestore(app, config.firestoreDatabaseId);
+    dbInstance = getFirestore(app, config.firestoreDatabaseId || "ai-studio-57109c31-3ddb-49f9-9f07-feb4961cd427");
     return dbInstance;
   } catch (err) {
     console.error("Failed to initialize Firebase on server:", err);
