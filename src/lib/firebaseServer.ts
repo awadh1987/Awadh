@@ -58,6 +58,7 @@ export async function loadFromFirestore(): Promise<any> {
     const operations: any[] = [];
     const invoices: any[] = [];
     const expenses: any[] = [];
+    const budgets: any[] = [];
     const audit_logs: any[] = [];
 
     for (const companyDoc of companiesSnapshot.docs) {
@@ -77,6 +78,9 @@ export async function loadFromFirestore(): Promise<any> {
       const expensesSnapshot = await getDocs(collection(db, "companies", companyId, "expenses"));
       expensesSnapshot.forEach(doc => expenses.push({ id: doc.id, ...doc.data() }));
 
+      const budgetsSnapshot = await getDocs(collection(db, "companies", companyId, "budgets"));
+      budgetsSnapshot.forEach(doc => budgets.push({ id: doc.id, ...doc.data() }));
+
       const logsSnapshot = await getDocs(collection(db, "companies", companyId, "audit_logs"));
       logsSnapshot.forEach(doc => audit_logs.push({ id: doc.id, ...doc.data() }));
     }
@@ -89,6 +93,7 @@ export async function loadFromFirestore(): Promise<any> {
       operations,
       invoices,
       expenses,
+      budgets,
       audit_logs
     };
   } catch (err) {
@@ -109,6 +114,7 @@ export async function saveToFirestore(dbData: any): Promise<boolean> {
     const operations = cleanData.operations || [];
     const invoices = cleanData.invoices || [];
     const expenses = cleanData.expenses || [];
+    const budgets = cleanData.budgets || [];
     const audit_logs = cleanData.audit_logs || [];
 
     // 1. Sync companies
@@ -122,6 +128,7 @@ export async function saveToFirestore(dbData: any): Promise<boolean> {
     const activeOperationsByCompany = new Map<string, string[]>();
     const activeInvoicesByCompany = new Map<string, string[]>();
     const activeExpensesByCompany = new Map<string, string[]>();
+    const activeBudgetsByCompany = new Map<string, string[]>();
     const activeLogsByCompany = new Map<string, string[]>();
 
     // 3. Write sub-collections
@@ -165,6 +172,16 @@ export async function saveToFirestore(dbData: any): Promise<boolean> {
       }
     }
 
+    for (const bgt of budgets) {
+      const { id, company_id, ...payload } = bgt;
+      if (company_id) {
+        if (!activeBudgetsByCompany.has(company_id)) activeBudgetsByCompany.set(company_id, []);
+        activeBudgetsByCompany.get(company_id)!.push(id);
+
+        await setDoc(doc(db, "companies", company_id, "budgets", id), { company_id, ...payload });
+      }
+    }
+
     // Since audit logs grow, only write new ones
     for (const log of audit_logs) {
       const { id, company_id, ...payload } = log;
@@ -176,7 +193,7 @@ export async function saveToFirestore(dbData: any): Promise<boolean> {
       }
     }
 
-    // 4. PRUNING: Delete orphans from Firestore that are no longer in DB state (e.g. deleted operations, invoices, expenses)
+    // 4. PRUNING: Delete orphans from Firestore that are no longer in DB state (e.g. deleted operations, invoices, expenses, budgets)
     for (const company of companies) {
       const companyId = company.id;
 
@@ -213,6 +230,15 @@ export async function saveToFirestore(dbData: any): Promise<boolean> {
       for (const snapDoc of expsSnapshot.docs) {
         if (!keptExpIds.includes(snapDoc.id)) {
           await deleteDoc(doc(db, "companies", companyId, "expenses", snapDoc.id));
+        }
+      }
+
+      // Budgets Prune
+      const bgtsSnapshot = await getDocs(collection(db, "companies", companyId, "budgets"));
+      const keptBgtIds = activeBudgetsByCompany.get(companyId) || [];
+      for (const snapDoc of bgtsSnapshot.docs) {
+        if (!keptBgtIds.includes(snapDoc.id)) {
+          await deleteDoc(doc(db, "companies", companyId, "budgets", snapDoc.id));
         }
       }
     }

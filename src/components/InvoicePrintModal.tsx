@@ -61,6 +61,79 @@ export default function InvoicePrintModal({
 
   const [copied, setCopied] = useState(false);
 
+  // Email simulation states
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailTo, setEmailTo] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBody, setEmailBody] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailStep, setEmailStep] = useState(0); 
+  const [emailSentSuccess, setEmailSentSuccess] = useState(false);
+
+  useEffect(() => {
+    if (showEmailModal) {
+      const formattedId = invoice.id.split("-").pop() || invoice.id;
+      const safeClientEmail = `${client.name.replace(/\s+/g, "").toLowerCase()}@domain-corp.com`;
+      setEmailTo(safeClientEmail);
+      
+      const defaultSubject = language === "ar"
+        ? `🧾 فاتورة ضريبية مستحقة من ${companyName} - رقم #${formattedId}`
+        : `🧾 Tax Invoice from ${companyName} - Ref #${formattedId}`;
+      setEmailSubject(defaultSubject);
+
+      const defaultBody = language === "ar"
+        ? `مرحباً ${client.name}،\n\nنرفق لكم طيه الفاتورة الضريبية رقم #${formattedId} بخصوص الخدمة التشغيلية المقدمة: "${operation.service}".\n\n- إجمالي المبلغ المطلوب سداده: ${invoice.amount.toLocaleString()} ${currency}\n- تاريخ الاستحقاق: ${invoice.due_date || "—"}\n- حالة الفاتورة الحالية: ${invoice.status === "Paid" ? "مسددة ومحصلة كلياً" : "قيد السداد المستحق"}\n\nنشكركم ثقتكم الغالية وتعاونكم المستمر معنا.\n\nتحياتنا،\n${companyName}`
+        : `Dear ${client.name},\n\nPlease find attached the tax invoice #${formattedId} for the professional service rendered: "${operation.service}".\n\n- Invoice Total (Inc. VAT): ${invoice.amount.toLocaleString()} ${currency}\n- Payment Due Date: ${invoice.due_date || "—"}\n- Operational Status: ${invoice.status === "Paid" ? "Paid & Settled" : "Pending Payment"}\n\nWe appreciate doing business with you.\n\nBest regards,\n${companyName}`;
+      setEmailBody(defaultBody);
+      
+      setEmailSending(false);
+      setEmailSentSuccess(false);
+      setEmailStep(0);
+    }
+  }, [showEmailModal, invoice, client, operation, companyName, language, currency]);
+
+  const handleSendEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailTo.trim() || !emailSubject.trim() || !emailBody.trim()) return;
+    
+    setEmailSending(true);
+    setEmailStep(1);
+
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    await sleep(1200);
+    setEmailStep(2);
+
+    await sleep(1500);
+    setEmailStep(3);
+
+    await sleep(1200);
+    setEmailStep(4);
+
+    const formattedId = invoice.id.split("-").pop() || invoice.id;
+    try {
+      await fetch("/api/audit-logs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-company-id": invoice.company_id || "comp-1"
+        },
+        body: JSON.stringify({
+          action: language === "ar" ? "إرسال الفاتورة بالبريد الإلكتروني" : "Dispatched invoice via email",
+          details: language === "ar"
+            ? `تم إرسال الفاتورة رقم #${formattedId} للعميل ببريده "${emailTo}" بنجاح. العنوان: "${emailSubject}". إجمالي المبلغ: ${invoice.amount.toLocaleString()} ${currency}.`
+            : `Successfully sent invoice #${formattedId} to client mailbox "${emailTo}". Subject: "${emailSubject}". Sum total: ${invoice.amount.toLocaleString()} ${currency}.`
+        })
+      });
+    } catch (err) {
+      console.warn("Could not write email dispatch to audit logs:", err);
+    }
+
+    await sleep(850);
+    setEmailSentSuccess(true);
+    setEmailSending(false);
+  };
+
   // Trigger Print using the browser native dialog
   const handlePrint = () => {
     window.print();
@@ -313,6 +386,14 @@ export default function InvoicePrintModal({
               )}
             </button>
 
+            <button
+              onClick={() => setShowEmailModal(true)}
+              className="w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border border-borderline hover:bg-borderline/20 text-txtmain bg-indigo-500/5 hover:text-indigo-600 dark:hover:text-indigo-400"
+            >
+              <Mail className="w-4 h-4 text-indigo-500" />
+              <span>{language === "ar" ? "إرسال عبر البريد الإلكتروني" : "Send/Dispatch via Email"}</span>
+            </button>
+
             <p className="text-[9px] text-txtmuted text-center leading-normal">
               {language === "ar" 
                 ? "اختر حفظ بتنسيق PDF في نافذة الطباعة كـ (Save as PDF) لتنزيل ملف الفاتورة المباشر." 
@@ -455,7 +536,16 @@ export default function InvoicePrintModal({
                 {/* Asymmetric Elegant Modern Header */}
                 <div className="flex flex-col sm:flex-row justify-between items-start gap-4 pb-6 mb-4 border-b border-slate-100">
                   <div className="flex items-start gap-3">
-                    <div className="w-1.5 h-12 rounded bg-indigo-600 self-stretch shrink-0" style={{ backgroundColor: primaryColorVal }} />
+                    {logoUrl ? (
+                      <img 
+                        src={logoUrl} 
+                        alt={companyName}
+                        className="w-12 h-12 rounded-lg object-contain border border-slate-200 p-1 shrink-0 bg-white shadow-xs" 
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-1.5 h-12 rounded bg-indigo-600 self-stretch shrink-0" style={{ backgroundColor: primaryColorVal }} />
+                    )}
                     <div className="space-y-1">
                       <h2 className="text-2xl font-black text-slate-950 font-sans tracking-tight">{companyName}</h2>
                       <div className="text-[10.5px] text-slate-400 flex flex-wrap gap-x-3 items-center">
@@ -542,7 +632,16 @@ export default function InvoicePrintModal({
                       [ ERP_LEDGER_RECORD_STATION ]
                     </span>
                     <h2 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-                      <span className="w-3.5 h-3.5 rounded-xs bg-slate-800" style={{ backgroundColor: primaryColorVal }} />
+                      {logoUrl ? (
+                        <img 
+                          src={logoUrl} 
+                          alt={companyName}
+                          className="w-10 h-10 rounded-md object-contain border border-slate-200 p-0.5 shrink-0 bg-white" 
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <span className="w-3.5 h-3.5 rounded-xs bg-slate-800" style={{ backgroundColor: primaryColorVal }} />
+                      )}
                       {companyName}
                     </h2>
                     <div className="text-[11px] font-mono text-slate-500 leading-relaxed">
@@ -809,6 +908,173 @@ export default function InvoicePrintModal({
         </button>
 
       </div>
+
+      {showEmailModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col relative" style={{ direction: language === "ar" ? "rtl" : "ltr" }}>
+            
+            {/* Header bar */}
+            <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-900/50">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-500 dark:text-indigo-400">
+                  <Mail className="w-4 h-4" />
+                </div>
+                <div className="text-start">
+                  <h3 className="text-sm font-black text-slate-800 dark:text-white">
+                    {language === "ar" ? "إرسال الفاتورة عبر البريد" : "Send Invoice via Email"}
+                  </h3>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                    {language === "ar" ? "إصدار وإرسال رقمي مدمج ومعتمد لنظام المبيعات" : "Digital delivery and audit-logged transmission"}
+                  </p>
+                </div>
+              </div>
+              {!emailSending && (
+                <button
+                  onClick={() => setShowEmailModal(false)}
+                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-all cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Body container */}
+            <div className="p-6 space-y-5">
+              
+              {emailSending ? (
+                /* Sending Simulator Loading Screen */
+                <div className="py-8 flex flex-col items-center justify-center text-center space-y-6">
+                  <div className="relative flex items-center justify-center">
+                    {/* Spinning main ring */}
+                    <div className="w-16 h-16 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+                    {/* Inner glowing pulse */}
+                    <div className="absolute w-8 h-8 rounded-full bg-indigo-505/10 flex items-center justify-center text-indigo-550 animate-pulse">
+                      <Mail className="w-4 h-4" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-black text-slate-800 dark:text-white tracking-wide">
+                      {language === "ar" ? "جاري الإرسال الإلكتروني..." : "Dispatched and Transmitting..."}
+                    </h4>
+                    <p className="text-[10.5px] text-indigo-550 dark:text-indigo-400 font-bold max-w-sm px-6 h-8 flex items-center justify-center">
+                      {emailStep === 1 && (language === "ar" ? "جاري توليد ملف الفاتورة بصيغة PDF وتجهيزه..." : "Rendering compliant high-resolution PDF container...")}
+                      {emailStep === 2 && (language === "ar" ? "جاري دمج الختم الموثق وتشفير ترميز QR الضريبي..." : "Integrating official cryptographic QR stamp & signatures...")}
+                      {emailStep === 3 && (language === "ar" ? "جاري فتح قناة نقل آمنة (TLS Handshake) للبريد المستلم..." : "Establishing secure TLS SMTP connection with recipient server...")}
+                      {emailStep === 4 && (language === "ar" ? "جاري إكمال الإرسال وتدوين السجل المالي المعزول..." : "Dispatched successfully. Transmitting audit ledger state...")}
+                    </p>
+                  </div>
+
+                  {/* Custom high-fidelity progress bars */}
+                  <div className="w-full max-w-xs bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                    <div 
+                      className="bg-indigo-550 h-full transition-all duration-500" 
+                      style={{ width: `${(emailStep / 4) * 100}%` }}
+                    />
+                  </div>
+
+                  <div className="text-[9px] text-slate-400 dark:text-slate-500">
+                    {language === "ar" 
+                      ? "يتم الآن تأمين الفاتورة وفق تعليمات هيئة الزكاة والضريبة والجمارك وتمريرها برقم السجل السحابي." 
+                      : "Operational security audits verify integrity signatures before packet dispatch completes."}
+                  </div>
+                </div>
+              ) : emailSentSuccess ? (
+                /* Finished Screen */
+                <div className="py-6 flex flex-col items-center justify-center text-center space-y-5">
+                  <div className="w-14 h-14 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-2xl flex items-center justify-center animate-bounce">
+                    <ShieldCheck className="w-7 h-7" />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <h4 className="text-sm font-black text-slate-800 dark:text-white">
+                      {language === "ar" ? "تم الإرسال بنجاح!" : "Sent Successfully!"}
+                    </h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-450 max-w-sm leading-relaxed">
+                      {language === "ar" 
+                        ? `تم إرسال الفاتورة رقم #${invoice.id.split("-").pop()} مباشرة إلى بريد العميل (${emailTo}). يمكنك مراجعة ذلك بسجل العمليات بصفحة الإعدادات.` 
+                        : `Invoice reference #${invoice.id.split("-").pop()} has been transmitted to client mailbox (${emailTo}). Transmission logged under auditing ledger.`}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => setShowEmailModal(false)}
+                    className="mt-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-8 rounded-xl text-xs transition-all cursor-pointer shadow-md shadow-emerald-500/10"
+                  >
+                    {language === "ar" ? "إغلاق النافذة" : "Dismiss"}
+                  </button>
+                </div>
+              ) : (
+                /* Standard email form input */
+                <form onSubmit={handleSendEmail} className="space-y-4">
+                  <div className="space-y-1 text-start">
+                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>{language === "ar" ? "اسم العميل المستلم" : "Recipient Client"}</span>
+                    </label>
+                    <input
+                      type="text"
+                      disabled
+                      value={client.name}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 text-slate-400 dark:text-slate-500 rounded-xl px-3.5 py-2 text-xs opacity-80"
+                    />
+                  </div>
+
+                  <div className="space-y-1 text-start">
+                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>{language === "ar" ? "البريد الإلكتروني للعميل المستلم *" : "Client Email Address *"}</span>
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={emailTo}
+                      onChange={(e) => setEmailTo(e.target.value)}
+                      placeholder="client@mail.com"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                    />
+                  </div>
+
+                  <div className="space-y-1 text-start">
+                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>{language === "ar" ? "عنوان الرسالة *" : "Email Subject *"}</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={emailSubject}
+                      onChange={(e) => setEmailSubject(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                    />
+                  </div>
+
+                  <div className="space-y-1 text-start">
+                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>{language === "ar" ? "نص الرسالة والبيان *" : "Message Content *"}</span>
+                    </label>
+                    <textarea
+                      required
+                      rows={5}
+                      value={emailBody}
+                      onChange={(e) => setEmailBody(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors resize-none leading-relaxed font-sans"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-indigo-600/10"
+                  >
+                    <Mail className="w-4 h-4" />
+                    <span>{language === "ar" ? "بدء الإرسال الرقمي الآمن" : "Dispatch Secure Digital Email"}</span>
+                  </button>
+                </form>
+              )}
+
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

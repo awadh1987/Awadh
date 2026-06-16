@@ -652,6 +652,96 @@ async function startServer() {
     res.json({ success: true, message: "تم حذف المصروف بنجاح" });
   });
 
+  // 9.4. Get budgets
+  app.get("/api/budgets", (req, res) => {
+    const companyId = getCompanyId(req);
+    const db = readDb();
+    const budgets = (db.budgets || []).filter((b: any) => b.company_id === companyId);
+    res.json(budgets);
+  });
+
+  // 9.4.2. Setup/Upsert budget
+  app.post("/api/budgets", (req, res) => {
+    const companyId = getCompanyId(req);
+    const { category, limit_amount, month } = req.body;
+
+    if (!category || limit_amount === undefined || !month) {
+      return res.status(400).json({ error: "الفئة والمبلغ المستهدف والشهر مطلوبان" });
+    }
+
+    const db = readDb();
+    db.budgets = db.budgets || [];
+
+    // Check if budget for category & month already exists for this company
+    const existingIndex = db.budgets.findIndex((b: any) => 
+      b.company_id === companyId && 
+      b.category === category && 
+      b.month === month
+    );
+
+    const compSetting = (db.companies || []).find((c: any) => c.id === companyId);
+    const categoryNameAr = category === "rent" ? "إيجار" : category === "salaries" ? "رواتب" : category === "subscriptions" ? "اشتراكات" : category === "utilities" ? "مرافق وخدمات" : category === "marketing" ? "تسويق" : "مصروفات تشغيلية أخرى";
+
+    let budgetObj;
+    if (existingIndex > -1) {
+      db.budgets[existingIndex].limit_amount = Number(limit_amount) || 0;
+      budgetObj = db.budgets[existingIndex];
+      logEvent(
+        db,
+        companyId,
+        "تحديث ميزانية فئة مصروف",
+        `تم تحديث الميزانية الشهرية لفئة: (${categoryNameAr}) لشهر (${month}) لتصبح ${budgetObj.limit_amount.toLocaleString()} ${compSetting?.currency || "ر.س"}`
+      );
+    } else {
+      budgetObj = {
+        id: "bgt-" + Date.now() + "-" + Math.floor(Math.random() * 100),
+        company_id: companyId,
+        category,
+        limit_amount: Number(limit_amount) || 0,
+        month
+      };
+      db.budgets.push(budgetObj);
+      logEvent(
+        db,
+        companyId,
+        "تحديد ميزانية فئة مصروف جديدة",
+        `تم تحديد ميزانية شهرية جديدة لفئة: (${categoryNameAr}) لشهر (${month}) بمبلغ ${budgetObj.limit_amount.toLocaleString()} ${compSetting?.currency || "ر.س"}`
+      );
+    }
+
+    writeDb(db);
+    res.json(budgetObj);
+  });
+
+  // 9.4.3. Delete budget
+  app.delete("/api/budgets/:id", (req, res) => {
+    const companyId = getCompanyId(req);
+    const { id } = req.params;
+    const db = readDb();
+
+    db.budgets = db.budgets || [];
+    const index = db.budgets.findIndex((b: any) => b.id === id && b.company_id === companyId);
+    if (index === -1) {
+      return res.status(404).json({ error: "الميزانية غير موجودة" });
+    }
+
+    const bgt = db.budgets[index];
+    db.budgets.splice(index, 1);
+
+    const compSetting = (db.companies || []).find((c: any) => c.id === companyId);
+    const categoryNameAr = bgt.category === "rent" ? "إيجار" : bgt.category === "salaries" ? "رواتب" : bgt.category === "subscriptions" ? "اشتراكات" : bgt.category === "utilities" ? "مرافق وخدمات" : bgt.category === "marketing" ? "تسويق" : "مصروفات أخرى";
+
+    logEvent(
+      db,
+      companyId,
+      "حذف ميزانية شهريّة",
+      `تم إلغاء ميزانية شهر: (${bgt.month}) لفئة: (${categoryNameAr}) بقيمة ${bgt.limit_amount.toLocaleString()} ${compSetting?.currency || "ر.س"}`
+    );
+
+    writeDb(db);
+    res.json({ success: true, message: "تم حذف الميزانية بنجاح" });
+  });
+
   // 9.5. Get Audit Logs
   app.get("/api/audit-logs", (req, res) => {
     const companyId = getCompanyId(req);

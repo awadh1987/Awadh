@@ -62,6 +62,14 @@ export interface Expense {
   description?: string;
 }
 
+export interface Budget {
+  id: string;
+  company_id: string;
+  category: string;
+  limit_amount: number;
+  month: string; // "YYYY-MM" format, e.g., "2026-06"
+}
+
 export interface DashboardStats {
   totalRevenue: number;
   totalCost: number;

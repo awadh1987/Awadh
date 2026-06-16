@@ -39,6 +39,13 @@ export default function Expenses({
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
+  // Budget feature states
+  const [activeTab, setActiveTab] = useState<"ledger" | "budgets">("ledger");
+  const [budgets, setBudgets] = useState<any[]>([]);
+  const [selectedBudgetMonth, setSelectedBudgetMonth] = useState(() => new Date().toISOString().substring(0, 7));
+  const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  const [editingAmount, setEditingAmount] = useState<string>("");
+
   // Form states
   const [category, setCategory] = useState("rent");
   const [amount, setAmount] = useState("");
@@ -72,8 +79,42 @@ export default function Expenses({
     }
   };
 
+  const fetchBudgets = async () => {
+    try {
+      const res = await fetch("/api/budgets", { headers: getHeaders() });
+      if (!res.ok) throw new Error("تعذر تحميل الميزانيات");
+      const data = await res.json();
+      setBudgets(data);
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
+  const handleSaveBudget = async (categoryKey: string, limitAmount: number) => {
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      const res = await fetch("/api/budgets", {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify({
+          category: categoryKey,
+          limit_amount: limitAmount,
+          month: selectedBudgetMonth
+        })
+      });
+      if (!res.ok) throw new Error("فشل الحفظ");
+      setSuccessMsg(language === "ar" ? "تم تحديث الميزانية بنجاح" : "Budget updated successfully");
+      await fetchBudgets();
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(language === "ar" ? "فشل حفظ الميزانية" : "Failed to save budget");
+    }
+  };
+
   useEffect(() => {
     fetchExpenses();
+    fetchBudgets();
   }, [selectedCompanyId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -246,10 +287,45 @@ export default function Expenses({
     })).sort((a, b) => b.value - a.value);
   }, [expenses, language]);
 
+  // Actual spent per category for the selected budget month (YYYY-MM)
+  const actualSpentByCategory = useMemo<Record<string, number>>(() => {
+    const result: Record<string, number> = {};
+    expenses.forEach((e) => {
+      if (e.date && e.date.substring(0, 7) === selectedBudgetMonth) {
+        result[e.category] = (result[e.category] || 0) + e.amount;
+      }
+    });
+    return result;
+  }, [expenses, selectedBudgetMonth]);
+
+  // Budget limit per category for the selected budget month (YYYY-MM)
+  const specifiedBudgetsByCategory = useMemo<Record<string, number>>(() => {
+    const result: Record<string, number> = {};
+    budgets.forEach((b) => {
+      if (b.month === selectedBudgetMonth) {
+        result[b.category] = Number(b.limit_amount);
+      }
+    });
+    return result;
+  }, [budgets, selectedBudgetMonth]);
+
+  const totalBudgeted = useMemo<number>(() => {
+    return (Object.values(specifiedBudgetsByCategory) as number[]).reduce((sum, val) => sum + val, 0);
+  }, [specifiedBudgetsByCategory]);
+
+  const totalSpentInMonth = useMemo<number>(() => {
+    return (Object.values(actualSpentByCategory) as number[]).reduce((sum, val) => sum + val, 0);
+  }, [actualSpentByCategory]);
+
+  const overallProgressPercentage = useMemo(() => {
+    if (totalBudgeted === 0) return 0;
+    return Math.min(100, Math.round((totalSpentInMonth / totalBudgeted) * 100));
+  }, [totalSpentInMonth, totalBudgeted]);
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-borderline pb-4">
         <div>
           <h2 className="text-2xl font-bold text-txtmain flex items-center gap-2">
             <Coins className="w-6 h-6 text-red-500" />
@@ -258,37 +334,69 @@ export default function Expenses({
           <p className="text-txtmuted text-sm mt-1 max-w-2xl">{t("exp_desc")}</p>
         </div>
 
-        {/* Dynamic Burden Counter Widget */}
-        <div className="bg-rose-50 dark:bg-rose-950/20 text-rose-800 dark:text-rose-300 px-5 py-3 rounded-2xl border border-rose-100 dark:border-rose-900/35 flex items-center gap-3">
-          <div className="w-10 h-10 bg-rose-500/10 rounded-xl flex items-center justify-center border border-rose-500/20 text-rose-600 dark:text-rose-400">
-            <TrendingDown className="w-5 h-5" />
+        {/* Tab Switcher & Burden Counter Layout */}
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shrink-0 border border-slate-200/50 dark:border-slate-700/50">
+            <button
+              onClick={() => {
+                setActiveTab("ledger");
+                setErrorMsg("");
+                setSuccessMsg("");
+              }}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "ledger"
+                  ? "bg-white dark:bg-slate-900 text-txtmain shadow-sm font-black"
+                  : "text-txtmuted hover:text-txtmain"
+              }`}
+            >
+              {language === "ar" ? "سجل المصروفات" : "Expenses Ledger"}
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab("budgets");
+                setErrorMsg("");
+                setSuccessMsg("");
+              }}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "budgets"
+                  ? "bg-white dark:bg-slate-900 text-txtmain shadow-sm font-black"
+                  : "text-txtmuted hover:text-txtmain"
+              }`}
+            >
+              {language === "ar" ? "الميزانيات والتقدم" : "Monthly Budgets & Progress"}
+            </button>
           </div>
-          <div>
-            <span className="text-[10px] uppercase font-bold text-rose-500/90 tracking-wider">
-              {t("exp_total_monthly_recurring")}
-            </span>
-            <p className="text-lg font-black leading-tight">
-              {monthlyRecurringBurden.toLocaleString("ar-SA", { maximumFractionDigits: 1 })}{" "}
-              <span className="text-xs font-medium">{companyCurrency}</span>
-            </p>
+
+          <div className="bg-rose-50 dark:bg-rose-950/20 text-rose-800 dark:text-rose-300 px-4 py-2 rounded-xl border border-rose-100 dark:border-rose-900/35 flex items-center gap-2 text-xs">
+            <TrendingDown className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+            <div>
+              <span className="text-[9px] uppercase font-bold text-rose-500/90 tracking-wider block">
+                {t("exp_total_monthly_recurring")}
+              </span>
+              <p className="font-extrabold leading-none">
+                {monthlyRecurringBurden.toLocaleString("ar-SA", { maximumFractionDigits: 1 })}{" "}
+                <span className="text-[10px] font-normal">{companyCurrency}</span>
+              </p>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Instant Success / Error Banners */}
       {successMsg && (
-        <div className="p-4 bg-emerald-600 text-white rounded-2xl text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
+        <div className="p-4 bg-emerald-600 text-white rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
           <span>✓ {successMsg}</span>
         </div>
       )}
       {errorMsg && (
-        <div className="p-4 bg-rose-600 text-white rounded-2xl text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
+        <div className="p-4 bg-rose-600 text-white rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
           <span>{errorMsg}</span>
         </div>
       )}
 
-      {/* Main Grid Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {activeTab === "ledger" ? (
+        /* Main Grid Content */
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Record Expense Form Block */}
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-cardbk rounded-2xl border border-borderline p-6 space-y-4">
@@ -605,6 +713,283 @@ export default function Expenses({
           </div>
         </div>
       </div>
+      ) : (
+        /* Intelligent Budgets View */
+        <div className="space-y-6 animate-in fade-in duration-300 text-start">
+          {/* Section Options / Selectors */}
+          <div className="bg-cardbk border border-borderline p-5 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <h3 className="font-bold text-md text-txtmain">
+                {language === "ar" ? "المراقبة الذكية لميزانيات الفئات" : "Category Budget Intelligence Tracker"}
+              </h3>
+              <p className="text-xs text-txtmuted mt-1 leading-relaxed">
+                {language === "ar"
+                  ? "حدد سقوفاً شهرية لكل فئة مصاريف لمقارنتها آلياً بالفواتير والمصروفات المسجلة فعلياً خلال الشهر المحدد لضبط الهدر المالي."
+                  : "Specify monthly spending caps per expense category to automatically evaluate consumption rates vs actual outlays."}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-txtmuted">
+                {language === "ar" ? "اختر الشهر المستهدف:" : "Select Target Month:"}
+              </label>
+              <input
+                type="month"
+                value={selectedBudgetMonth}
+                onChange={(e) => {
+                  setSelectedBudgetMonth(e.target.value);
+                  setEditingCategory(null);
+                }}
+                className="bg-appbk border border-borderline text-txtmain text-xs font-bold rounded-xl px-3 py-2 font-mono focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 cursor-pointer"
+              />
+            </div>
+          </div>
+
+          {/* Dynamic Months Summary Bento Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Card 1: Total Budget Set */}
+            <div className="bg-cardbk border border-borderline p-5 rounded-2xl flex items-center gap-4">
+              <div className="w-12 h-12 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-600 dark:text-indigo-400 border border-indigo-500/25">
+                <Coins className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[10px] text-txtmuted font-bold block uppercase tracking-wider">
+                  {language === "ar" ? "إجمالي الميزانية المحددة" : "Total Allocated Budget"}
+                </span>
+                <p className="text-xl font-black text-txtmain mt-1 font-mono">
+                  {totalBudgeted.toLocaleString()} <span className="text-xs font-medium">{companyCurrency}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Card 2: Actual Spend this month */}
+            <div className="bg-cardbk border border-borderline p-5 rounded-2xl flex items-center gap-4">
+              <div className="w-12 h-12 bg-rose-500/10 rounded-xl flex items-center justify-center text-rose-600 dark:text-rose-400 border border-rose-500/25">
+                <TrendingDown className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[10px] text-txtmuted font-bold block uppercase tracking-wider">
+                  {language === "ar" ? "إجمالي المصاريف الفعلية المسجلة" : "Total Outlays Spent"}
+                </span>
+                <p className="text-xl font-black text-rose-600 dark:text-rose-400 mt-1 font-mono">
+                  {totalSpentInMonth.toLocaleString()} <span className="text-xs font-medium">{companyCurrency}</span>
+                </p>
+                <span className="text-[9px] text-txtmuted font-medium">
+                  {language === "ar" ? `في ${selectedBudgetMonth}` : `for ${selectedBudgetMonth}`}
+                </span>
+              </div>
+            </div>
+
+            {/* Card 3: Consumption Rate */}
+            <div className="bg-cardbk border border-borderline p-5 rounded-2xl flex items-center gap-4">
+              <div className="w-12 h-12 bg-amber-500/10 rounded-xl flex items-center justify-center text-amber-600 dark:text-amber-400 border border-amber-500/25 shrink-0">
+                <div className="text-sm font-black font-mono">{overallProgressPercentage}%</div>
+              </div>
+              <div className="flex-1 text-start">
+                <span className="text-[10px] text-txtmuted font-bold block uppercase tracking-wider">
+                  {language === "ar" ? "نسبة استهلاك الميزانية الكلية" : "Global Consumption Rate"}
+                </span>
+                <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full mt-2 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      overallProgressPercentage > 100
+                        ? "bg-red-600"
+                        : overallProgressPercentage > 85
+                        ? "bg-amber-500"
+                        : "bg-emerald-500"
+                    }`}
+                    style={{ width: `${overallProgressPercentage}%` }}
+                  />
+                </div>
+                {totalBudgeted === 0 ? (
+                  <span className="text-[9px] text-amber-600 dark:text-amber-400 font-bold block mt-1">
+                    {language === "ar" ? "⚠️ حدد ميزانية لبعض الفئات لبدء الاحتساب" : "⚠️ Define budgets to start calculations"}
+                  </span>
+                ) : (
+                  <span className="text-[9px] text-txtmuted font-medium block mt-1">
+                    {language === "ar"
+                      ? totalSpentInMonth > totalBudgeted 
+                        ? "🛑 تجاوزت الميزانية الإجمالية لشهرك الحالي!"
+                        : "✓ ضمن حدود السقف المصمم للميزانية الفخرية."
+                      : totalSpentInMonth > totalBudgeted 
+                        ? "🛑 You have exceeded global budget ceiling!"
+                        : "✓ Safely within set monthly limits."}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Central Progress Table & Inline Limit Setters */}
+          <div className="bg-cardbk rounded-2xl border border-borderline p-6 space-y-4">
+            <h3 className="font-extrabold text-md text-txtmain border-b border-borderline pb-3">
+              {language === "ar" ? `تحليل ومقارنة الفئات لشهر: (${selectedBudgetMonth})` : `Category Analytics & Targets for: (${selectedBudgetMonth})`}
+            </h3>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-start text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-borderline text-txtmuted">
+                    <th className="py-3 px-4 font-bold text-start">{language === "ar" ? "فئة المصروف" : "Expense Category"}</th>
+                    <th className="py-3 px-4 font-bold text-start">{language === "ar" ? "سقف الميزانية" : "Budget Limit"}</th>
+                    <th className="py-3 px-4 font-bold text-start">{language === "ar" ? "المصروف الفعلي" : "Actual Spent"}</th>
+                    <th className="py-3 px-4 font-bold text-start">{language === "ar" ? "شريط وعاء الميزانية" : "Consumption Slider Bar"}</th>
+                    <th className="py-3 px-4 font-bold text-center">{language === "ar" ? "الحالة والتقييم" : "Status Assessment"}</th>
+                    <th className="py-3 px-4 font-bold text-center">{language === "ar" ? "إجراء ضبط الميزانية" : "Adjust Budget"}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-borderline">
+                  {["rent", "salaries", "office_supplies", "subscriptions", "utilities", "marketing", "other"].map((cat) => {
+                    const limitVal = specifiedBudgetsByCategory[cat] || 0;
+                    const spentVal = actualSpentByCategory[cat] || 0;
+                    
+                    let percent = 0;
+                    if (limitVal > 0) {
+                      percent = Math.round((spentVal / limitVal) * 100);
+                    } else if (spentVal > 0) {
+                      percent = 100;
+                    }
+
+                    // Compute Status Evaluation Badge
+                    let bColor = "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300";
+                    let bText = language === "ar" ? "غير محددة" : "Not Set";
+
+                    if (limitVal > 0) {
+                      if (spentVal > limitVal) {
+                        bColor = "bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 border border-red-200/50";
+                        bText = language === "ar" ? "⚠️ تجاوز ميزان" : "⚠️ Exceeded";
+                      } else if (spentVal > limitVal * 0.85) {
+                        bColor = "bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border border-amber-200/50";
+                        bText = language === "ar" ? "⚡ تحذير" : "⚡ Warning";
+                      } else {
+                        bColor = "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 border border-emerald-200/50";
+                        bText = language === "ar" ? "✓ آمنة" : "✓ Safe";
+                      }
+                    } else if (spentVal > 0) {
+                      bColor = "bg-red-50 dark:bg-red-950/45 text-red-600 dark:text-red-400 border border-red-300/40";
+                      bText = language === "ar" ? "⚠️ هدر غير مخطط" : "⚠️ Unbudgeted Outflow";
+                    }
+
+                    return (
+                      <tr key={cat} className="hover:bg-slate-50 dark:hover:bg-slate-800/10 transition-colors">
+                        {/* Category Name & Color Icon */}
+                        <td className="py-4 px-4 whitespace-nowrap">
+                          <div className="flex items-center gap-2 font-bold text-txtmain text-sm">
+                            <span className="p-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg shrink-0">
+                              {getCategoryIcon(cat)}
+                            </span>
+                            <span>{getCategoryName(cat)}</span>
+                          </div>
+                        </td>
+
+                        {/* Budget Limit Amount */}
+                        <td className="py-4 px-4 whitespace-nowrap text-txtmain font-bold">
+                          {editingCategory === cat ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                value={editingAmount}
+                                onChange={(e) => setEditingAmount(e.target.value)}
+                                className="w-24 bg-appbk border border-borderline font-mono text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-600"
+                                placeholder={language === "ar" ? "المبلغ" : "Limit"}
+                                autoFocus
+                              />
+                            </div>
+                          ) : (
+                            <span className="font-mono">
+                              {limitVal > 0 ? (
+                                `${limitVal.toLocaleString()} ${companyCurrency}`
+                              ) : (
+                                <span className="text-txtmuted text-xs font-normal">
+                                  {language === "ar" ? "غير محددة (0)" : "Not Allocated (0)"}
+                                </span>
+                              )}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Actual Spent */}
+                        <td className="py-4 px-4 whitespace-nowrap font-black text-rose-500 dark:text-rose-400 font-mono">
+                          {spentVal > 0 ? (
+                            `- ${spentVal.toLocaleString()} ${companyCurrency}`
+                          ) : (
+                            <span className="text-txtmuted font-normal text-xs font-sans">—</span>
+                          )}
+                        </td>
+
+                        {/* Progress slider visually */}
+                        <td className="py-4 px-4 min-w-[150px] max-w-[250px]">
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1 bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-300 ${
+                                  limitVal === 0 
+                                    ? spentVal > 0 ? "bg-red-500" : "bg-slate-200"
+                                    : percent > 100 
+                                    ? "bg-red-500" 
+                                    : percent > 85 
+                                    ? "bg-amber-400" 
+                                    : "bg-emerald-500"
+                                }`}
+                                style={{ width: `${limitVal > 0 ? Math.min(100, percent) : spentVal > 0 ? 100 : 0}%` }}
+                              />
+                            </div>
+                            <span className="font-mono text-[10px] font-bold text-txtmuted shrink-0 w-8 text-end">
+                              {limitVal > 0 ? `${percent}%` : spentVal > 0 ? "⚠️" : "0%"}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Evaluation Badge */}
+                        <td className="py-4 px-4 text-center whitespace-nowrap">
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold ${bColor}`}>
+                            {bText}
+                          </span>
+                        </td>
+
+                        {/* Action buttons (Inline Save/Cancel) */}
+                        <td className="py-4 px-4 text-center whitespace-nowrap">
+                          {editingCategory === cat ? (
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={async () => {
+                                  await handleSaveBudget(cat, Number(editingAmount) || 0);
+                                  setEditingCategory(null);
+                                }}
+                                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-all"
+                              >
+                                {language === "ar" ? "حفظ" : "Save"}
+                              </button>
+                              <button
+                                onClick={() => setEditingCategory(null)}
+                                className="px-2 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-txtmain rounded-lg text-xs font-bold transition-all"
+                              >
+                                {language === "ar" ? "إلغاء" : "Cancel"}
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setEditingCategory(cat);
+                                setEditingAmount(limitVal ? String(limitVal) : "");
+                              }}
+                              className="px-3 py-1 bg-slate-100 hover:bg-indigo-50 dark:bg-slate-800 dark:hover:bg-slate-700/80 text-txtmain hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg text-xs font-bold border border-borderline transition-all cursor-pointer"
+                            >
+                              {limitVal > 0 
+                                ? language === "ar" ? "تحديث الحد" : "Edit Cap" 
+                                : language === "ar" ? "تحديد سقف الميزانية" : "Set Limit"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
