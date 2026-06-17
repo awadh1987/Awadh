@@ -18,6 +18,7 @@ import {
   Database,
   Coins,
   Cloud,
+  TrendingDown,
   Zap
 } from "lucide-react";
 import Dashboard from "./components/Dashboard";
@@ -29,6 +30,7 @@ import Expenses from "./components/Expenses";
 import GoogleSync from "./components/GoogleSync";
 import NotificationCenter from "./components/NotificationCenter";
 import Subscription from "./components/Subscription";
+import FixedAssets from "./components/FixedAssets";
 import { Company, Client, Operation, Invoice, DashboardStats } from "./types";
 import { useLanguage } from "./lib/LanguageContext";
 import Login from "./components/Login";
@@ -67,7 +69,7 @@ export default function App() {
   }, []);
 
   // Navigation Tabs state
-  const [activeTab, setActiveTab ] = useState<"dashboard" | "operations" | "clients" | "invoices" | "expenses" | "sync" | "subscriptions" | "backups">("dashboard");
+  const [activeTab, setActiveTab ] = useState<"dashboard" | "operations" | "clients" | "invoices" | "expenses" | "fixed_assets" | "sync" | "subscriptions" | "backups">("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Dark mode state
@@ -96,6 +98,9 @@ export default function App() {
   const [operations, setOperations] = useState<Operation[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
+
+  // Active Role State with sandbox session overrides
+  const [userRole, setUserRole] = useState<"owner" | "admin" | "subscriber">("owner");
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -164,12 +169,40 @@ export default function App() {
       const statsData = await statsRes.json();
       setStats(statsData);
 
+      // Fetch corporate members to get user's active database role
+      try {
+        const memRes = await fetch("/api/members", { headers });
+        if (memRes.ok) {
+          const membersList = await memRes.json();
+          const targetEmail = currentUser?.email || "awadh.a.1987@gmail.com";
+          const selfMem = membersList.find((m: any) => m.email.toLowerCase() === targetEmail.toLowerCase() && m.status === "Active");
+          if (selfMem) {
+            setUserRole(selfMem.role);
+          } else {
+            setUserRole("owner"); // Default fallback
+          }
+        }
+      } catch (e) {
+        console.warn("Failed retrieving roster roles for", currentUser?.email, e);
+      }
+
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err?.message || "خطأ في الاتصال بالواجهة الخلفية للنظام");
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const triggerDueAlertsProcess = async () => {
+    try {
+      await fetch("/api/invoices/due-alerts/process", {
+        method: "POST",
+        headers: getHeaders()
+      });
+    } catch (e) {
+      console.warn("Silent due alerts trigger warning:", e);
     }
   };
 
@@ -181,6 +214,8 @@ export default function App() {
         await fetchCompanies();
         // Load selected company data
         await loadCompanyData(true);
+        // Trigger silent due alerts background check
+        triggerDueAlertsProcess();
       };
       init();
     }
@@ -190,6 +225,7 @@ export default function App() {
   useEffect(() => {
     if (currentUser && selectedCompanyId) {
       loadCompanyData(true);
+      triggerDueAlertsProcess();
     }
   }, [selectedCompanyId, currentUser]);
 
@@ -218,7 +254,7 @@ export default function App() {
   };
 
   // Handle adding client
-  const handleCreateClient = async (data: { name: string; company: string; phone: string }) => {
+  const handleCreateClient = async (data: { name: string; company: string; phone: string; email?: string }) => {
     try {
       const res = await fetch("/api/clients", {
         method: "POST",
@@ -497,6 +533,14 @@ export default function App() {
               </button>
 
               <button
+                onClick={() => { setActiveTab("fixed_assets"); setSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all text-start ${activeTab === "fixed_assets" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-bold" : "hover:bg-slate-800/50 hover:text-white"}`}
+              >
+                <TrendingDown className="w-4 h-4 text-rose-400" />
+                <span>{t("tab_fixed_assets")}</span>
+              </button>
+
+              <button
                 onClick={() => { setActiveTab("sync"); setSidebarOpen(false); }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all text-start ${activeTab === "sync" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-bold" : "hover:bg-slate-800/50 hover:text-white"}`}
               >
@@ -744,7 +788,9 @@ export default function App() {
                     operations={operations}
                     invoices={invoices}
                     companyCurrency={companies.find(c => c.id === selectedCompanyId)?.currency || "ر.س"}
+                    currentCompany={companies.find(c => c.id === selectedCompanyId) || null}
                     onCreateClient={handleCreateClient} 
+                    userRole={userRole}
                   />
                 )}
 
@@ -758,6 +804,8 @@ export default function App() {
                     onUpdateCompany={(updatedCompany) => {
                       setCompanies(companies.map(c => c.id === updatedCompany.id ? updatedCompany : c));
                     }}
+                    userRole={userRole}
+                    currentUserEmail={currentUser?.email || undefined}
                   />
                 )}
 
@@ -766,6 +814,13 @@ export default function App() {
                     companyCurrency={companies.find(c => c.id === selectedCompanyId)?.currency || "ر.س"}
                     selectedCompanyId={selectedCompanyId}
                     onRefreshStats={() => loadCompanyData(false)}
+                  />
+                )}
+
+                {activeTab === "fixed_assets" && (
+                  <FixedAssets 
+                    companyCurrency={companies.find(c => c.id === selectedCompanyId)?.currency || "ر.س"}
+                    selectedCompanyId={selectedCompanyId}
                   />
                 )}
 
@@ -796,6 +851,9 @@ export default function App() {
                       await fetchCompanies();
                       await loadCompanyData(false);
                     }}
+                    currentUserEmail={currentUser?.email}
+                    userRole={userRole}
+                    onChangeRole={(role) => setUserRole(role)}
                   />
                 )}
 

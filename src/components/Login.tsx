@@ -21,6 +21,7 @@ import {
   signUpWithEmailAndPassword, 
   signInWithEmailAndPassword 
 } from "../lib/firebaseAuth";
+import firebaseConfig from "../../firebase-applet-config.json";
 
 interface LoginProps {
   onSuccess: (user: any) => void;
@@ -39,10 +40,12 @@ export default function Login({ onSuccess, darkMode, setDarkMode }: LoginProps) 
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [isAuthDisabledError, setIsAuthDisabledError] = useState(false);
 
   const handleSignIn = async () => {
     setLoading(true);
     setErrorMsg("");
+    setIsAuthDisabledError(false);
     try {
       const result = await googleSignIn();
       if (result) {
@@ -73,6 +76,7 @@ export default function Login({ onSuccess, darkMode, setDarkMode }: LoginProps) 
 
     setLoading(true);
     setErrorMsg("");
+    setIsAuthDisabledError(false);
     try {
       let user;
       if (authMode === "signup") {
@@ -95,6 +99,7 @@ export default function Login({ onSuccess, darkMode, setDarkMode }: LoginProps) 
       } else if (message.includes("auth/wrong-password") || message.includes("auth/user-not-found")) {
         message = language === "ar" ? "البريد الإلكتروني أو كلمة المرور غير صحيحة." : "Invalid email or password.";
       } else if (message.includes("auth/operation-not-allowed")) {
+        setIsAuthDisabledError(true);
         message = language === "ar" 
           ? "ميزة التسجيل بـ Email/Password غير مفعلة بفرع الـ Auth بوحدة تحكم Google Firebase. تواصل مع المدير." 
           : "Standard Email/Password auth is disabled in Firebase console. Please enable it there.";
@@ -234,14 +239,14 @@ export default function Login({ onSuccess, darkMode, setDarkMode }: LoginProps) 
               <div className="flex bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200/60 dark:border-slate-800/80">
                 <button
                   type="button"
-                  onClick={() => { setAuthMode("signin"); setErrorMsg(""); }}
+                  onClick={() => { setAuthMode("signin"); setErrorMsg(""); setIsAuthDisabledError(false); }}
                   className={`flex-1 py-2 text-center rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer ${authMode === "signin" ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-white shadow-xs" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"}`}
                 >
                   {language === "ar" ? "تسجيل الدخول" : "Sign In"}
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setAuthMode("signup"); setErrorMsg(""); }}
+                  onClick={() => { setAuthMode("signup"); setErrorMsg(""); setIsAuthDisabledError(false); }}
                   className={`flex-1 py-2 text-center rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer ${authMode === "signup" ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-white shadow-xs" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"}`}
                 >
                   {language === "ar" ? "إنشاء حساب جديد" : "Sign Up"}
@@ -252,6 +257,41 @@ export default function Login({ onSuccess, darkMode, setDarkMode }: LoginProps) 
                 <div className="p-4 bg-rose-50 dark:bg-rose-950/25 border border-rose-100 dark:border-rose-900/30 rounded-2xl text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-start gap-2.5">
                   <span className="w-1.5 h-1.5 bg-rose-600 dark:bg-rose-500 rounded-full shrink-0 mt-1.5" />
                   <span className="leading-relaxed">{errorMsg}</span>
+                </div>
+              )}
+
+              {isAuthDisabledError && (
+                <div className="p-5 bg-indigo-50/70 dark:bg-indigo-950/20 border border-indigo-100/80 dark:border-indigo-900/40 rounded-2xl text-xs text-slate-700 dark:text-slate-300 space-y-3">
+                  <p className="font-extrabold text-indigo-700 dark:text-indigo-400">
+                    {language === "ar" ? "🛠️ خطوات تفعيل ميزة التسجيل بالبريد وكلمة المرور:" : "🛠️ Steps to enable Email/Password Authentication:"}
+                  </p>
+                  <ol className="list-decimal list-inside space-y-1.5 leading-relaxed text-[11px] text-start">
+                    <li>
+                      {language === "ar" ? "انقر على الرابط التالي لفتح لوحة تحكم مشروعك في Firebase مباشرة:" : "Click the link below to open your Firebase Console project directly:"}
+                      <a 
+                        href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`}
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="block mt-1 font-mono font-bold text-indigo-600 dark:text-indigo-400 hover:underline break-all bg-white dark:bg-slate-900/60 px-2.5 py-1.5 rounded-lg border border-indigo-100 dark:border-indigo-900/30 text-[10px]"
+                      >
+                        https://console.firebase.google.com/project/{firebaseConfig.projectId}/authentication/providers
+                      </a>
+                    </li>
+                    <li>
+                      {language === "ar" ? "اضغط على زر إضافة موفر جديد (Add new provider) في قسم موجهي تسجيل الدخول (Sign-in providers)." : "Under Sign-in providers, click on Add new provider."}
+                    </li>
+                    <li>
+                      {language === "ar" ? "اختر البريد الإلكتروني/كلمة المرور (Email/Password) كطريقة تسجيل دخول." : "Select the Email/Password option."}
+                    </li>
+                    <li>
+                      {language === "ar" ? "قم بتمكين خيار التفعيل الأول (Enable) واضغط على حفظ (Save)." : "Toggle the first Enable switch and save your changes."}
+                    </li>
+                  </ol>
+                  <p className="text-[10px] text-slate-500 font-medium text-start">
+                    {language === "ar" 
+                      ? "💡 بمجرد تحديث الإعدادات في لوحة التحكم، يمكنك العودة هنا والمحاولة مجدداً دون الحاجة لإعادة تحميل الصفحة."
+                      : "💡 Once enabled in your console, you can return here and try signing up again immediately."}
+                  </p>
                 </div>
               )}
 

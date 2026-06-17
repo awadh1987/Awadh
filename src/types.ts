@@ -10,6 +10,7 @@ export interface Company {
   subscription_expiry?: string;
   subscription_price_paid?: number;
   subscription_billing_cycle?: "monthly" | "yearly";
+  enable_due_email_notifications?: boolean;
 }
 
 export interface Client {
@@ -18,6 +19,7 @@ export interface Client {
   name: string;
   company: string;
   phone: string;
+  email?: string;
 }
 
 export interface Operation {
@@ -62,12 +64,34 @@ export interface Expense {
   description?: string;
 }
 
+export interface FixedAsset {
+  id: string;
+  company_id: string;
+  name: string;
+  purchase_date: string; // YYYY-MM-DD
+  purchase_value: number;
+  useful_life_years: number;
+  salvage_value: number;
+  description?: string;
+  category?: string;
+}
+
 export interface Budget {
   id: string;
   company_id: string;
   category: string;
   limit_amount: number;
   month: string; // "YYYY-MM" format, e.g., "2026-06"
+}
+
+export interface TeamMember {
+  id: string;
+  company_id: string;
+  name: string;
+  email: string;
+  role: "owner" | "admin" | "subscriber";
+  status: "Active" | "Invited" | "Suspended";
+  date_added: string;
 }
 
 export interface DashboardStats {

@@ -1,7 +1,9 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { initializeFirestore, doc, getDocFromServer } from "firebase/firestore";
+import { initializeFirestore, doc, getDocFromServer, setLogLevel } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
+
+setLogLevel("error");
 
 const app = initializeApp(firebaseConfig);
 export const db = initializeFirestore(app, {

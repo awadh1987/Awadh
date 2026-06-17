@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Invoice, Client, Operation, Company } from "../types";
-import { Search, FileText, CheckCircle2, Clock, AlertTriangle, ExternalLink, Calendar, Printer, FileSpreadsheet } from "lucide-react";
+import { Search, FileText, CheckCircle2, Clock, AlertTriangle, ExternalLink, Calendar, Printer, FileSpreadsheet, MessageSquare } from "lucide-react";
 import InvoicePrintModal from "./InvoicePrintModal";
 import { useLanguage } from "../lib/LanguageContext";
 
@@ -301,6 +301,48 @@ export default function Invoices({ invoices, clients, operations, currentCompany
                   </span>
 
                   <div className="flex items-center gap-1.5">
+                    {isOverdue && (
+                      <button
+                        onClick={() => {
+                          const client = clients.find(c => c.id === inv.client_id);
+                          const clientName = client ? client.name : "عميل غير معروف";
+                          const clientPhone = client ? client.phone : "";
+                          
+                          const shortInvId = inv.id.split("-").pop() || inv.id;
+                          const invoiceNo = `INV-${shortInvId.toUpperCase()}`;
+                          const invoiceAmount = inv.amount.toLocaleString();
+                          const invoiceLink = `${window.location.origin}/?invoice=${inv.id}`;
+                          
+                          const arabicMsg = `مرحباً أ/ ${clientName}،
+نود تذكيركم بلطف بأن الفاتورة رقم #${invoiceNo} المستحقة بقيمة ${invoiceAmount} ${currentCompany?.currency || "ر.س"} متأخرة السداد حالياً.
+يمكنكم مراجعة كشف الفاتورة وتفاصيلها عبر الرابط التالي:
+${invoiceLink}
+شكراً جزيلاً لتعاونكم وحسن تفهمكم.`;
+
+                          const englishMsg = `Hello ${clientName},
+This is a gentle reminder that invoice #${invoiceNo} for ${invoiceAmount} ${currentCompany?.currency || "r.s"} is currently overdue.
+You can preview and settle the invoice using this link:
+${invoiceLink}
+Thank you for your cooperation and understanding.`;
+
+                          const textToSend = language === "ar" ? arabicMsg : englishMsg;
+                          const encodedMessage = encodeURIComponent(textToSend);
+                          
+                          // Format phone number (remove any non-numeric chars except +)
+                          const cleanedPhone = (clientPhone || "").replace(/[^\d+]/g, "");
+                          
+                          // Open WhatsApp URL
+                          const whatsappUrl = `https://wa.me/${cleanedPhone}?text=${encodedMessage}`;
+                          window.open(whatsappUrl, "_blank");
+                        }}
+                        className="font-bold text-[10px] px-2.5 py-1.5 rounded-lg bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/20 duration-150 cursor-pointer flex items-center gap-1 transition-all"
+                        title={language === "ar" ? "ارسال تذكير عبر واتساب" : "Send WhatsApp reminder"}
+                      >
+                        <MessageSquare className="w-3 h-3" />
+                        <span>{language === "ar" ? "واتساب" : "WhatsApp"}</span>
+                      </button>
+                    )}
+
                     <button
                       onClick={() => setSelectedInvoiceForPrint(inv)}
                       className="font-bold text-[10px] px-2.5 py-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 duration-150 cursor-pointer flex items-center gap-1 transition-all"

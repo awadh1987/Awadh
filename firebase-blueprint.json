@@ -93,6 +93,21 @@
         "user": { "type": "string" }
       },
       "required": ["id", "company_id", "timestamp", "action", "details", "user"]
+    },
+    "Member": {
+      "title": "Member",
+      "description": "Corporate roster members with secure system access roles",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "company_id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["owner", "admin", "subscriber"] },
+        "status": { "type": "string", "enum": ["Active", "Inactive"] },
+        "date_added": { "type": "string", "format": "date" }
+      },
+      "required": ["id", "company_id", "name", "email", "role", "status"]
     }
   },
   "firestore": {
@@ -119,6 +134,10 @@
     "/companies/{companyId}/audit_logs/{logId}": {
       "schema": "AuditLog",
       "description": "Sub-collection of tenant backoffice audit trails"
+    },
+    "/companies/{companyId}/members/{memberId}": {
+      "schema": "Member",
+      "description": "Sub-collection of tenant corporate roster memberships"
     }
   }
 }

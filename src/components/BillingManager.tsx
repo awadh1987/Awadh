@@ -12,6 +12,8 @@ interface BillingManagerProps {
   currentCompany: Company | null;
   onToggleInvoice: (id: string, currentStatus: "Paid" | "Unpaid") => void;
   onUpdateCompany: (updated: Company) => void;
+  userRole?: string;
+  currentUserEmail?: string;
 }
 
 export default function BillingManager({
@@ -21,6 +23,8 @@ export default function BillingManager({
   currentCompany,
   onToggleInvoice,
   onUpdateCompany,
+  userRole,
+  currentUserEmail,
 }: BillingManagerProps) {
   const { language } = useLanguage();
   const [activeSubTab, setActiveSubTab] = useState<"ledger" | "settings">("ledger");
@@ -84,6 +88,8 @@ export default function BillingManager({
           <SettingsComponent
             company={currentCompany}
             onUpdateCompany={onUpdateCompany}
+            userRole={userRole}
+            currentUserEmail={currentUserEmail}
           />
         )}
       </div>

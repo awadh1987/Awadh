@@ -60,6 +60,7 @@ export async function loadFromFirestore(): Promise<any> {
     const expenses: any[] = [];
     const budgets: any[] = [];
     const audit_logs: any[] = [];
+    const members: any[] = [];
 
     for (const companyDoc of companiesSnapshot.docs) {
       const companyId = companyDoc.id;
@@ -83,9 +84,13 @@ export async function loadFromFirestore(): Promise<any> {
 
       const logsSnapshot = await getDocs(collection(db, "companies", companyId, "audit_logs"));
       logsSnapshot.forEach(doc => audit_logs.push({ id: doc.id, ...doc.data() }));
+
+      // Load members
+      const membersSnapshot = await getDocs(collection(db, "companies", companyId, "members"));
+      membersSnapshot.forEach(doc => members.push({ id: doc.id, ...doc.data() }));
     }
 
-    console.log(`Successfully completed Firestore load. Loaded ${companies.length} companies, ${clients.length} clients, ${operations.length} operations, ${invoices.length} invoices.`);
+    console.log(`Successfully completed Firestore load. Loaded ${companies.length} companies, ${clients.length} clients, ${operations.length} operations, ${invoices.length} invoices, ${members.length} members.`);
     
     return {
       companies,
@@ -94,7 +99,8 @@ export async function loadFromFirestore(): Promise<any> {
       invoices,
       expenses,
       budgets,
-      audit_logs
+      audit_logs,
+      members
     };
   } catch (err) {
     console.error("Error loading backing ledger database state from Firestore:", err);
@@ -116,6 +122,7 @@ export async function saveToFirestore(dbData: any): Promise<boolean> {
     const expenses = cleanData.expenses || [];
     const budgets = cleanData.budgets || [];
     const audit_logs = cleanData.audit_logs || [];
+    const members = cleanData.members || [];
 
     // 1. Sync companies
     for (const company of companies) {
@@ -130,6 +137,7 @@ export async function saveToFirestore(dbData: any): Promise<boolean> {
     const activeExpensesByCompany = new Map<string, string[]>();
     const activeBudgetsByCompany = new Map<string, string[]>();
     const activeLogsByCompany = new Map<string, string[]>();
+    const activeMembersByCompany = new Map<string, string[]>();
 
     // 3. Write sub-collections
     for (const client of clients) {
@@ -193,7 +201,18 @@ export async function saveToFirestore(dbData: any): Promise<boolean> {
       }
     }
 
-    // 4. PRUNING: Delete orphans from Firestore that are no longer in DB state (e.g. deleted operations, invoices, expenses, budgets)
+    // Write team members
+    for (const mem of members) {
+      const { id, company_id, ...payload } = mem;
+      if (company_id) {
+        if (!activeMembersByCompany.has(company_id)) activeMembersByCompany.set(company_id, []);
+        activeMembersByCompany.get(company_id)!.push(id);
+
+        await setDoc(doc(db, "companies", company_id, "members", id), { company_id, ...payload });
+      }
+    }
+
+    // 4. PRUNING: Delete orphans from Firestore that are no longer in DB state (e.g. deleted operations, invoices, expenses, budgets, members)
     for (const company of companies) {
       const companyId = company.id;
 
@@ -239,6 +258,15 @@ export async function saveToFirestore(dbData: any): Promise<boolean> {
       for (const snapDoc of bgtsSnapshot.docs) {
         if (!keptBgtIds.includes(snapDoc.id)) {
           await deleteDoc(doc(db, "companies", companyId, "budgets", snapDoc.id));
+        }
+      }
+
+      // Members Prune
+      const membersSnapshot = await getDocs(collection(db, "companies", companyId, "members"));
+      const keptMemberIds = activeMembersByCompany.get(companyId) || [];
+      for (const snapDoc of membersSnapshot.docs) {
+        if (!keptMemberIds.includes(snapDoc.id)) {
+          await deleteDoc(doc(db, "companies", companyId, "members", snapDoc.id));
         }
       }
     }

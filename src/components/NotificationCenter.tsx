@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Bell, BellOff, Calendar, DollarSign, CheckCircle2, RefreshCw, AlertTriangle, ShieldCheck } from "lucide-react";
+import { Bell, BellOff, Calendar, DollarSign, CheckCircle2, RefreshCw, AlertTriangle, ShieldCheck, MessageSquare } from "lucide-react";
 import { useLanguage } from "../lib/LanguageContext";
 
 interface OverdueInvoice {
@@ -11,6 +11,8 @@ interface OverdueInvoice {
   status: "Paid" | "Unpaid";
   due_date: string;
   client_name: string;
+  client_phone?: string;
+  client_email?: string;
 }
 
 interface NotificationCenterProps {
@@ -257,19 +259,57 @@ export default function NotificationCenter({ selectedCompanyId, companyCurrency 
 
                     </div>
 
-                    {/* Quick collect CTA */}
-                    <button
-                      onClick={() => handleCollectInvoice(inv.id)}
-                      disabled={actionLoadingId === inv.id}
-                      className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-1.5 px-3 rounded-lg text-[10px] transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shadow-emerald-500/10"
-                    >
-                      {actionLoadingId === inv.id ? (
-                        <RefreshCw className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                      )}
-                      <span>{isAr ? texts.collectAr : texts.collectEn}</span>
-                    </button>
+                    {/* Action buttons row */}
+                    <div className="flex gap-1.5 w-full">
+                      <button
+                        onClick={() => handleCollectInvoice(inv.id)}
+                        disabled={actionLoadingId === inv.id}
+                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-1.5 px-3 rounded-lg text-[10px] transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shadow-emerald-500/10"
+                      >
+                        {actionLoadingId === inv.id ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        )}
+                        <span>{isAr ? texts.collectAr : texts.collectEn}</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          const clientName = inv.client_name;
+                          const invoiceNo = `INV-${shortInvId.toUpperCase()}`;
+                          const invoiceAmount = inv.amount.toLocaleString();
+                          const invoiceLink = `${window.location.origin}/?invoice=${inv.id}`;
+                          
+                          const arabicMsg = `مرحباً أ/ ${clientName}،
+نود تذكيركم بلطف بأن الفاتورة رقم #${invoiceNo} المستحقة بقيمة ${invoiceAmount} ${companyCurrency} متأخرة السداد حالياً.
+يمكنكم مراجعة كشف الفاتورة وتفاصيلها عبر الرابط التالي:
+${invoiceLink}
+شكراً جزيلاً لتعاونكم وحسن تفهمكم.`;
+
+                          const englishMsg = `Hello ${clientName},
+This is a gentle reminder that invoice #${invoiceNo} for ${invoiceAmount} ${companyCurrency} is currently overdue.
+You can preview and settle the invoice using this link:
+${invoiceLink}
+Thank you for your cooperation and understanding.`;
+
+                          const textToSend = isAr ? arabicMsg : englishMsg;
+                          const encodedMessage = encodeURIComponent(textToSend);
+                          
+                          // Format phone number (remove any non-numeric chars except +)
+                          const cleanedPhone = (inv.client_phone || "").replace(/[^\d+]/g, "");
+                          
+                          // Open WhatsApp URL
+                          const whatsappUrl = `https://wa.me/${cleanedPhone}?text=${encodedMessage}`;
+                          window.open(whatsappUrl, "_blank");
+                        }}
+                        className="px-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer text-[10px] font-bold shadow-sm shadow-green-500/10"
+                        title={isAr ? "إرسال تذكير عبر واتساب" : "Send WhatsApp reminder"}
+                      >
+                        <MessageSquare className="w-3 h-3" />
+                        <span>{isAr ? "واتساب" : "WhatsApp"}</span>
+                      </button>
+                    </div>
 
                   </div>
                 );

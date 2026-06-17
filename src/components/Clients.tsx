@@ -1,12 +1,13 @@
 import React, { useState, useMemo } from "react";
-import { Client, Operation, Invoice } from "../types";
+import { Client, Operation, Invoice, Company } from "../types";
 import { 
   PlusCircle, Search, Users, Phone, Building, UserPlus,
   BarChart3, Award, Clock, DollarSign, ArrowUpRight, 
   CheckCircle2, AlertCircle, ChevronRight, FileSpreadsheet, TrendingUp, Sparkles, Building2,
-  SlidersHorizontal, X, Calendar, Filter
+  SlidersHorizontal, X, Calendar, Filter, Mail, Lock, Unlock, FileCheck, CheckCircle, Eye, LogOut, ShieldCheck
 } from "lucide-react";
 import { useLanguage } from "../lib/LanguageContext";
+import InvoicePrintModal from "./InvoicePrintModal";
 import {
   ResponsiveContainer,
   BarChart,
@@ -25,7 +26,9 @@ interface ClientsProps {
   operations: Operation[];
   invoices: Invoice[];
   companyCurrency: string;
-  onCreateClient: (data: { name: string; company: string; phone: string }) => Promise<void>;
+  currentCompany?: Company | null;
+  onCreateClient: (data: { name: string; company: string; phone: string; email?: string }) => Promise<void>;
+  userRole?: "owner" | "admin" | "subscriber";
 }
 
 export default function Clients({ 
@@ -33,15 +36,25 @@ export default function Clients({
   operations = [], 
   invoices = [], 
   companyCurrency = "ر.س", 
-  onCreateClient 
+  currentCompany = null,
+  onCreateClient,
+  userRole = "owner"
 }: ClientsProps) {
   const { language, t } = useLanguage();
-  const [activeSubTab, setActiveSubTab] = useState<"manage" | "analytics">("manage");
+  const [activeSubTab, setActiveSubTab] = useState<"manage" | "analytics" | "portal">("manage");
+  
+  // Client Portal State hooks
+  const [portalLoginInput, setPortalLoginInput] = useState("");
+  const [portalSelectedClient, setPortalSelectedClient] = useState<Client | null>(null);
+  const [portalError, setPortalError] = useState("");
+  const [portalSubtab, setPortalSubtab] = useState<"outstanding" | "paid">("outstanding");
+  const [portalSelectedInvoiceForPrint, setPortalSelectedInvoiceForPrint] = useState<Invoice | null>(null);
   
   // Create client form state
   const [name, setName] = useState("");
   const [company, setCompany] = useState("");
   const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -67,10 +80,11 @@ export default function Clients({
 
     setLoading(true);
     try {
-      await onCreateClient({ name, company, phone });
+      await onCreateClient({ name, company, phone, email });
       setName("");
       setCompany("");
       setPhone("");
+      setEmail("");
     } catch (err: any) {
       setError(err?.message || (language === "ar" ? "حدث خطأ أثناء حفظ العميل" : "An error occurred while saving the client."));
     } finally {
@@ -290,9 +304,24 @@ export default function Clients({
             {language === "ar" ? "جديد" : "New"}
           </span>
         </button>
+        <button
+          onClick={() => setActiveSubTab("portal")}
+          className={`flex items-center gap-2 px-4 py-3 border-b-2 font-bold text-xs transition-all cursor-pointer whitespace-nowrap ${
+            activeSubTab === "portal"
+              ? "border-indigo-600 text-indigo-600 dark:border-indigo-500 dark:text-indigo-400"
+              : "border-transparent text-txtmuted hover:text-txtmain"
+          }`}
+          id="clients_subtab_portal"
+        >
+          <Lock className="w-4 h-4 text-emerald-500 animate-pulse" />
+          <span>{language === "ar" ? "بوابة الخدمات ودفع الفواتير آمنة" : "Clients Portal & Access Gate"}</span>
+          <span className="text-[9px] bg-emerald-500/10 text-emerald-500 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wider">
+            {language === "ar" ? "آمن" : "Secure Gate"}
+          </span>
+        </button>
       </div>
 
-      {activeSubTab === "manage" ? (
+      {activeSubTab === "manage" && (
         /* Original Clients Directory Layout Grid */
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="clients_manage_grid">
           
@@ -355,13 +384,43 @@ export default function Clients({
                   </div>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all duration-150 disabled:opacity-50 cursor-pointer"
-                >
-                  {loading ? (language === "ar" ? "جاري الإضافة..." : "Adding...") : t("clients_save_btn")}
-                </button>
+                <div>
+                  <label className="block text-txtmain text-xs font-semibold mb-1.5">
+                    {language === "ar" ? "البريد الإلكتروني للعميل" : "Client Email Address"}
+                  </label>
+                  <div className="relative">
+                    <span className={`absolute inset-y-0 ${language === "ar" ? "right-0 pr-3" : "left-0 pl-3"} flex items-center pb-0.5 text-txtmuted`}>
+                      <Mail className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="email"
+                      placeholder="client@company.com"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      className={`w-full bg-appbk border border-borderline text-txtmain placeholder-txtmuted/50 rounded-xl py-2.5 text-sm focus:outline-none focus:border-indigo-500 transition-colors text-left font-medium ${language === "ar" ? "pr-9" : "pl-9"}`}
+                      style={{ direction: "ltr" }}
+                    />
+                  </div>
+                </div>
+
+                {userRole === "subscriber" ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full bg-slate-800 border border-slate-700/60 text-slate-400 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 cursor-not-allowed"
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>{language === "ar" ? "الحساب مخصص للعرض فقط" : "Viewer Account (Read-Only)"}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all duration-150 disabled:opacity-50 cursor-pointer"
+                  >
+                    {loading ? (language === "ar" ? "جاري الإضافة..." : "Adding...") : t("clients_save_btn")}
+                  </button>
+                )}
               </form>
             </div>
           </div>
@@ -494,6 +553,7 @@ export default function Clients({
                         <th className="font-bold py-3 px-2 text-start">{language === "ar" ? "الاسم بالكامل" : "Full Name"}</th>
                         <th className="font-bold py-3 px-2 text-start">{language === "ar" ? "المنشأة / الشركة" : "Enterprise / Business"}</th>
                         <th className="font-bold py-3 px-2 text-start">{language === "ar" ? "رقم التواصل" : "Contact Phone"}</th>
+                        <th className="font-bold py-3 px-2 text-start">{language === "ar" ? "البريد الإلكتروني" : "Email Address"}</th>
                         <th className="font-bold py-3 px-2 text-center">{language === "ar" ? "الرمز المعرّف (ID)" : "Unique Identifier (ID)"}</th>
                       </tr>
                     </thead>
@@ -516,6 +576,7 @@ export default function Clients({
                             )}
                           </td>
                           <td className="py-3.5 px-2 text-txtmuted font-mono">{c.phone || "—"}</td>
+                          <td className="py-3.5 px-2 text-txtmuted font-sans text-start" style={{ direction: "ltr" }}>{c.email || "—"}</td>
                           <td className="py-3.5 px-2 text-center">
                             <span className="font-mono text-txtmuted bg-appbk px-2 py-0.5 rounded text-[10px] border border-borderline">
                               {c.id.substring(0, 8)}...
@@ -532,7 +593,9 @@ export default function Clients({
           </div>
 
         </div>
-      ) : (
+      )}
+
+      {activeSubTab === "analytics" && (
         /* Advanced Financial Analytics & Lifetime Value Tab Layout */
         <div className="space-y-6 animate-in fade-in duration-300" id="clients_analytics_workspace">
           
@@ -914,6 +977,469 @@ export default function Clients({
           )}
 
         </div>
+      )}
+
+      {activeSubTab === "portal" && (
+        <div className="space-y-6 animate-in fade-in duration-200" id="client_portal_workspace">
+          
+          {!portalSelectedClient ? (
+            /* Portal Login View */
+            <div className="max-w-4xl mx-auto bg-cardbk rounded-2xl border border-borderline overflow-hidden shadow-xl grid grid-cols-1 md:grid-cols-12" id="portal_unauth_gate">
+              
+              {/* Educational branding side */}
+              <div className="md:col-span-5 bg-gradient-to-br from-indigo-950 to-indigo-900 text-white p-8 flex flex-col justify-between relative border-b md:border-b-0 md:border-r border-borderline/20">
+                <div className="absolute inset-0 bg-radial-gradient from-indigo-500/10 to-transparent pointer-events-none" />
+                
+                <div className="space-y-4 relative z-10">
+                  <div className="p-3 bg-white/10 rounded-xl w-fit border border-white/20">
+                    <Lock className="w-6 h-6 text-emerald-400 animate-pulse" />
+                  </div>
+                  <h3 className="text-xl font-black leading-tight">
+                    {language === "ar" ? "بوابة الخدمات وتسوية الفواتير" : "Enterprise Financial Clearing Gate"}
+                  </h3>
+                  <p className="text-xs text-indigo-200 leading-relaxed">
+                    {language === "ar" 
+                      ? "نظام الحوكمة الرقمي للشركاء يتيح لعملائنا الكرام تتبع عقود التشغيل، والتحقق من الفواتير المعلقة، والاطلاع على كشف المدفوعات التاريخية، وطباعة إيصالات القبض المعتمدة فضاءً آمنًا وبشكل مستقل."
+                      : "The partner dynamic logging gate allows our commercial clients to inspect active services, verify outstanding billing parameters, audit previous clearances, and render compliant receipts autonomously."}
+                  </p>
+                </div>
+
+                <div className="pt-8 border-t border-white/10 space-y-3 relative z-10 text-[11px] text-indigo-300">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>{language === "ar" ? "اتصال مشفر وجلسات معزولة بالكامل" : "SSL Encrypted Secure Tunnel Active"}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <FileCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>{language === "ar" ? "الامتثال الكامل لمتطلبات الفاتورة الإلكترونية" : "Tax Invoice Standard Compliant"}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Secure Login Form card */}
+              <div className="md:col-span-7 p-8 flex flex-col justify-center" id="portal_login_panel">
+                <div className="max-w-md mx-auto w-full space-y-6">
+                  <div className="space-y-1">
+                    <h4 className="text-md font-extrabold text-txtmain">
+                      {language === "ar" ? "تسجيل الدخول الآمن للعميل" : "Secure Client Authentication"}
+                    </h4>
+                    <p className="text-xs text-txtmuted">
+                      {language === "ar" 
+                        ? "استخدم بريدك الإلكتروني، أو رقم الجوال، أو رقم المعرف الخاص بك PIN المسجل في النظام."
+                        : "Log in with your registered Email, Contact Phone, or Unique Client ID Passcode."}
+                    </p>
+                  </div>
+
+                  {portalError && (
+                    <div className="p-3.5 bg-rose-500/10 text-rose-500 text-xs rounded-xl border border-rose-500/15 flex items-center gap-2 font-bold animate-shake">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{portalError}</span>
+                    </div>
+                  )}
+
+                  <form onSubmit={(e) => {
+                    e.preventDefault();
+                    setPortalError("");
+                    const trimmedInput = portalLoginInput.trim().toLowerCase();
+                    if (!trimmedInput) {
+                      setPortalError(language === "ar" ? "يرجى تعبئة الحقل للمتابعة" : "Credential parameter is required to initialize session");
+                      return;
+                    }
+                    const found = clients.find(c => 
+                      c.id.toLowerCase() === trimmedInput || 
+                      (c.email && c.email.toLowerCase() === trimmedInput) ||
+                      (c.phone && c.phone.replace(/[^\d]/g, "") === trimmedInput.replace(/[^\d]/g, ""))
+                    );
+                    if (found) {
+                      setPortalSelectedClient(found);
+                      setPortalError("");
+                      setPortalLoginInput("");
+                    } else {
+                      setPortalError(language === "ar" ? "لم نتمكن من مطابقة البيانات. يرجى التحقق من المدخلات أو استخدام بوابة الفحص السريع بالأسفل." : "Failed to associate client profile with input index. Check credentials or try fast developer tabs below.");
+                    }
+                  }} className="space-y-4">
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-extrabold text-txtmain leading-relaxed">
+                        {language === "ar" ? "معرف العميل أو البريد الإلكتروني *" : "Secure Credential Token / Email *"}
+                      </label>
+                      <input
+                        type="text"
+                        placeholder={language === "ar" ? "أدخل المعرف (مثال: client-1) أو بريدك الإلكتروني..." : "e.g. client@domain.com or Client ID PIN"}
+                        value={portalLoginInput}
+                        onChange={(e) => setPortalLoginInput(e.target.value)}
+                        className={`w-full bg-appbk border border-borderline text-txtmain placeholder-txtmuted/45 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-indigo-500 font-mono tracking-wide ${language === "ar" ? "text-right" : "text-left"}`}
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-indigo-600/15"
+                    >
+                      <Unlock className="w-3.5 h-3.5" />
+                      <span>{language === "ar" ? "التحقق وفتح الجلسة الآمنة" : "Verify Token & Set Session"}</span>
+                    </button>
+                  </form>
+
+                  {/* Sandbox helper for demonstration */}
+                  <div className="border-t border-borderline pt-5 space-y-3">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-extrabold text-indigo-500 uppercase flex items-center gap-1">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        {language === "ar" ? "الوصول التجريبي السريع لمحاكاة العميل" : "Sandbox Fast Evaluation Tool"}
+                      </span>
+                      <span className="text-txtmuted bg-appbk px-2 py-0.5 rounded-full border border-borderline text-[9px]">
+                        {language === "ar" ? "أداة الفحص" : "Sandbox Linker"}
+                      </span>
+                    </div>
+                    
+                    {clients.length === 0 ? (
+                      <p className="text-[10px] text-txtmuted">
+                        {language === "ar" ? "يرجى إضافة عملاء أولاً لتجربة المحاكاة." : "Register clients directory indexes first to engage checkout simulation."}
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2">
+                        {clients.slice(0, 4).map(c => (
+                          <button
+                            key={c.id}
+                            onClick={() => {
+                              setPortalSelectedClient(c);
+                              setPortalError("");
+                              setPortalLoginInput("");
+                            }}
+                            className="bg-appbk hover:bg-indigo-500/10 hover:border-indigo-500 text-start p-2 rounded-xl text-xs border border-borderline/60 transition-all flex flex-col gap-0.5 justify-center group"
+                          >
+                            <span className="font-bold text-txtmain group-hover:text-indigo-500 truncate">{c.name}</span>
+                            <span className="text-[9px] text-txtmuted font-mono">{c.company}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              </div>
+
+            </div>
+          ) : (
+            /* Authenticated Portal Dashboard View */
+            <div className="space-y-6" id="portal_auth_dashboard_workspace">
+              
+              {/* Dynamic portal header with details */}
+              <div className="bg-cardbk p-6 rounded-2xl border border-borderline shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-start">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/25 text-[9px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 shrink-0 uppercase">
+                      <ShieldCheck className="w-3 h-3 text-emerald-500 animate-pulse" />
+                      <span>{language === "ar" ? "جلسة مشفرة نشطة" : "Active Encrypted Connection"}</span>
+                    </span>
+                    <span className="text-[10px] text-txtmuted font-mono bg-appbk border border-borderline px-1.5 rounded">
+                      ID: {portalSelectedClient.id}
+                    </span>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-txtmain flex items-center gap-1.5">
+                      {portalSelectedClient.name}
+                    </h3>
+                    <p className="text-xs text-txtmuted">
+                      {language === "ar" ? `الشركة والمؤسسة التابعة: ${portalSelectedClient.company}` : `Affiliated Business Unit: ${portalSelectedClient.company}`}
+                      {portalSelectedClient.email && ` | ${portalSelectedClient.email}`}
+                      {portalSelectedClient.phone && ` | ${portalSelectedClient.phone}`}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setPortalSelectedClient(null);
+                    setPortalSubtab("outstanding");
+                    setPortalError("");
+                  }}
+                  className="bg-rose-500/10 hover:bg-rose-500 hover:text-white px-4 py-2 text-rose-500 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-rose-500/20 cursor-pointer w-full md:w-auto justify-center"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>{language === "ar" ? "تسجيل الخروج والإنهاء" : "Terminate Connection"}</span>
+                </button>
+              </div>
+
+              {/* Sub-KPI analysis computed dynamically */}
+              {(() => {
+                const clientInvoices = invoices.filter(inv => inv.client_id === portalSelectedClient.id);
+                const paidInvoices = clientInvoices.filter(inv => inv.status === "Paid");
+                const unpaidInvoices = clientInvoices.filter(inv => inv.status === "Unpaid");
+
+                const totalInvoiced = clientInvoices.reduce((sum, inv) => sum + inv.amount, 0);
+                const totalPaid = paidInvoices.reduce((sum, inv) => sum + inv.amount, 0);
+                const totalOutstanding = unpaidInvoices.reduce((sum, inv) => sum + inv.amount, 0);
+
+                const reliabilityScore = clientInvoices.length > 0 
+                  ? Math.round((paidInvoices.length / clientInvoices.length) * 100) 
+                  : 100;
+
+                return (
+                  <>
+                    {/* KPI Widget Cards Row */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="portal_stats_row">
+                      
+                      {/* Total invoices */}
+                      <div className="bg-cardbk p-4 rounded-xl border border-borderline flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center shrink-0">
+                          <FileSpreadsheet className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[10px] text-txtmuted uppercase font-bold">{language === "ar" ? "مجموع الفواتير المصدرة" : "Deed Ledger Bills"}</p>
+                          <p className="text-md font-mono font-black text-txtmain truncate">
+                            {totalInvoiced.toLocaleString()} <span className="text-xs font-sans text-txtmuted">{companyCurrency}</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Outstanding remaining */}
+                      <div className="bg-cardbk p-4 rounded-xl border border-borderline flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center shrink-0">
+                          <DollarSign className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[10px] text-txtmuted uppercase font-bold">{language === "ar" ? "رصيد الفواتير غير المسددة" : "Outstanding Carrying Due"}</p>
+                          <p className="text-md font-mono font-black text-brand-colors text-amber-500 truncate">
+                            {totalOutstanding.toLocaleString()} <span className="text-xs font-sans text-txtmuted">{companyCurrency}</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Paid cleared */}
+                      <div className="bg-cardbk p-4 rounded-xl border border-borderline flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0">
+                          <CheckCircle className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[10px] text-txtmuted uppercase font-bold">{language === "ar" ? "إجمالي المطالبات المسددة" : "Fully Cleared Payments"}</p>
+                          <p className="text-md font-mono font-black text-emerald-500 truncate">
+                            {totalPaid.toLocaleString()} <span className="text-xs font-sans text-txtmuted">{companyCurrency}</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Financial commit score indicator */}
+                      <div className="bg-cardbk p-4 rounded-xl border border-borderline flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-lg bg-teal-500/10 text-teal-500 flex items-center justify-center shrink-0">
+                          <Award className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0 w-full">
+                          <p className="text-[10px] text-txtmuted uppercase font-bold">{language === "ar" ? "مؤشر الالتزام وموثوقية السداد" : "Financial Clearance Score"}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="text-md font-mono font-black text-teal-500">{reliabilityScore}%</span>
+                            <div className="w-full bg-slate-350 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                              <div className="bg-teal-500 h-full rounded-full transition-all duration-500" style={{ width: `${reliabilityScore}%` }} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                    </div>
+
+                    {/* Main Ledger Area */}
+                    <div className="bg-cardbk p-6 rounded-2xl border border-borderline text-start space-y-4">
+                      
+                      {/* Sub tab toggles */}
+                      <div className="flex border-b border-borderline gap-1 overflow-x-auto">
+                        <button
+                          onClick={() => setPortalSubtab("outstanding")}
+                          className={`flex items-center gap-2 px-4 py-2.5 border-b-2 font-extrabold text-xs transition-colors whitespace-nowrap cursor-pointer ${
+                            portalSubtab === "outstanding"
+                              ? "border-amber-500 text-amber-500"
+                              : "border-transparent text-txtmuted hover:text-txtmain"
+                          }`}
+                        >
+                          <Clock className="w-4 h-4 text-amber-500 shrink-0" />
+                          <span>{language === "ar" ? "فواتير مستحقة الدفع" : "Accrued Outstanding Bills"}</span>
+                          {unpaidInvoices.length > 0 && (
+                            <span className="text-[10px] bg-amber-500/10 text-amber-500 font-extrabold px-1.5 py-0.5 rounded-full font-mono shrink-0">
+                              {unpaidInvoices.length}
+                            </span>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => setPortalSubtab("paid")}
+                          className={`flex items-center gap-2 px-4 py-2.5 border-b-2 font-extrabold text-xs transition-colors whitespace-nowrap cursor-pointer ${
+                            portalSubtab === "paid"
+                              ? "border-emerald-500 text-emerald-500"
+                              : "border-transparent text-txtmuted hover:text-txtmain"
+                          }`}
+                        >
+                          <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+                          <span>{language === "ar" ? "المدفوعات السابقة وإيصالات القبض" : "Payment History & Clearance Receipts"}</span>
+                          {paidInvoices.length > 0 && (
+                            <span className="text-[10px] bg-emerald-500/10 text-emerald-500 font-extrabold px-1.5 py-0.5 rounded-full font-mono shrink-0">
+                              {paidInvoices.length}
+                            </span>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Display Table/List depending on selected toggle sub-tab */}
+                      {portalSubtab === "outstanding" ? (
+                        /* Outstanding Bills Section */
+                        unpaidInvoices.length === 0 ? (
+                          <div className="py-12 text-center bg-slate-500/5 dark:bg-slate-900/10 rounded-2xl border-2 border-dashed border-borderline">
+                            <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
+                            <p className="text-xs text-txtmain font-bold">{language === "ar" ? "رصيدك صفري! لا توجد فواتير معلقة" : "All Accounts Settle Up!"}</p>
+                            <p className="text-[10px] text-txtmuted max-w-xs mx-auto leading-normal mt-0.5">
+                              {language === "ar" ? "نشكركم على التزامكم الميمون بالسداد. تم سداد وتسوية كافة المطالبات بالكامل." : "No accrued bills registered to your customer profile. Thank you for keeping outstanding levels to zero."}
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            <div className="overflow-x-auto rounded-xl border border-borderline bg-appbk/20">
+                              <table className="w-full text-xs">
+                                <thead className="bg-appbk text-txtmuted border-b border-borderline text-[10px] uppercase font-bold">
+                                  <tr>
+                                    <th className="py-3 px-4 text-start">{language === "ar" ? "رقم الفاتورة" : "Invoice Code"}</th>
+                                    <th className="py-3 px-3 text-start">{language === "ar" ? "الخدمة أو العقد" : "Service Description"}</th>
+                                    <th className="py-3 px-3 text-start">{language === "ar" ? "تاريخ الاستحقاق" : "Payment Due"}</th>
+                                    <th className="py-3 px-3 text-end">{language === "ar" ? "المبلغ المستحق" : "Accrued carrying"}</th>
+                                    <th className="py-3 px-4 text-center">{language === "ar" ? "خيارات وإجراءات" : "Actions Gate"}</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-borderline/45 font-medium text-txtmain">
+                                  {unpaidInvoices.map(inv => {
+                                    const relativeOp = operations.find(o => o.id === inv.op_id) || { service: language === "ar" ? "عقد خدمات ومشاريع" : "Contract Delivery" };
+                                    const rawInvoiceCode = inv.id.split("-").pop()?.toUpperCase() || "BILL";
+                                    return (
+                                      <tr key={inv.id} className="hover:bg-appbk/45 transition-colors">
+                                        <td className="py-3.5 px-4 font-mono font-bold text-txtmain select-all">
+                                          INV-{rawInvoiceCode}
+                                        </td>
+                                        <td className="py-3.5 px-3">
+                                          <div className="font-bold">{relativeOp.service}</div>
+                                          <span className="text-[10px] text-txtmuted select-none">
+                                            {language === "ar" ? "إيراد تجاري" : "B2B Operation"}
+                                          </span>
+                                        </td>
+                                        <td className="py-3.5 px-3 font-mono text-txtmuted">
+                                          <span className="text-red-400 font-bold block">{inv.id ? (language === "ar" ? "قريباً / مستحق السداد" : "Accrued Term") : ""}</span>
+                                          <span className="text-[10px]">{language === "ar" ? "تسوية عاجلة" : "Standard Terms"}</span>
+                                        </td>
+                                        <td className="py-3.5 px-3 text-end font-mono font-black text-txtmain">
+                                          {inv.amount.toLocaleString()} <span className="text-[10px] font-sans text-txtmuted">{companyCurrency}</span>
+                                        </td>
+                                        <td className="py-3.5 px-4">
+                                          <div className="flex items-center justify-center gap-1.5">
+                                            <button
+                                              onClick={() => setPortalSelectedInvoiceForPrint(inv)}
+                                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-3 py-1.5 rounded-lg text-[10px] transition-colors flex items-center gap-1 cursor-pointer"
+                                            >
+                                              <Eye className="w-3.5 h-3.5" />
+                                              <span>{language === "ar" ? "استعراض وجدول الفاتورة" : "Review Terms"}</span>
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            {/* Dynamic Mock Bank Transfer Details / Payment instructions */}
+                            <div className="p-4 bg-amber-500/5 rounded-xl border border-amber-500/15 text-xs space-y-2 text-txtmain max-w-4xl">
+                              <p className="font-black text-amber-500 flex items-center gap-1.5">
+                                <AlertCircle className="w-4 h-4" />
+                                <span>{language === "ar" ? "سياسة وأقنية التسوية والتحصيل المالي" : "Fast Payment instructions & gateways"}</span>
+                              </p>
+                              <p className="text-[11px] leading-relaxed text-txtmuted">
+                                {language === "ar" 
+                                  ? "لتسوية أي من الفواتير المعلقة أعلاه، يرجى القيام بالتحويل المصرفي المباشر لحسابات الشركة الرئيسية وإشعار محاسب الشركة، أو النقر على استعراض الفاتورة بالأعلى ومسح رمز الاستجابة السريع للفوترة."
+                                  : "To settle any outstanding accrued balance listed above, please direct standard bank wire transfer directly using compliant routing codes, or press 'Review Terms' to query invoice's online payment links & barcode."}
+                              </p>
+                            </div>
+                          </div>
+                        )
+                      ) : (
+                        /* Paid Clearance Receipts Section */
+                        paidInvoices.length === 0 ? (
+                          <div className="py-12 text-center bg-slate-500/5 dark:bg-slate-900/10 rounded-2xl border-2 border-dashed border-borderline">
+                            <Clock className="w-8 h-8 text-txtmuted/45 mx-auto mb-2 animate-spin" />
+                            <p className="text-xs text-txtmain font-bold">{language === "ar" ? "لا تتوفر إيصالات سابقة" : "No Cleared Receipts Registers"}</p>
+                            <p className="text-[10px] text-txtmuted max-w-xs mx-auto leading-normal mt-0.5">
+                              {language === "ar" ? "لم نسجل أي مدفوعات تاريخية مكتملة لهذا العميل حالياً في نظام الحسابات الختامي." : "No settled payments linked to your client ID indexes. History will display receipts once bills are solved."}
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto rounded-xl border border-borderline bg-appbk/20">
+                            <table className="w-full text-xs">
+                              <thead className="bg-appbk text-txtmuted border-b border-borderline text-[10px] uppercase font-bold">
+                                <tr>
+                                  <th className="py-3 px-4 text-start">{language === "ar" ? "رقم إيصال القبض" : "Receipt Index"}</th>
+                                  <th className="py-3 px-3 text-start">{language === "ar" ? "الخدمات المغطاة" : "Operations Cleared"}</th>
+                                  <th className="py-3 px-3 text-center">{language === "ar" ? "تأكيد الدفع وموثق السجل" : "Security Stamp"}</th>
+                                  <th className="py-3 px-3 text-end">{language === "ar" ? "المبلغ المسدد" : "Cleared Carrying"}</th>
+                                  <th className="py-3 px-4 text-center">{language === "ar" ? "تصديق السند" : "Compliance Receipt"}</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-borderline/45 font-medium text-txtmain">
+                                {paidInvoices.map(inv => {
+                                  const relativeOp = operations.find(o => o.id === inv.op_id) || { service: language === "ar" ? "خدمات تجارية مطابقة" : "Technical Delivery" };
+                                  const rawReceiptCode = inv.id.split("-").pop()?.toUpperCase() || "REC";
+                                  return (
+                                    <tr key={inv.id} className="hover:bg-appbk/45 transition-colors">
+                                      <td className="py-3.5 px-4 font-mono font-bold text-txtmain select-all text-emerald-500">
+                                        REC-{rawReceiptCode}
+                                      </td>
+                                      <td className="py-3.5 px-3">
+                                        <div className="font-bold">{relativeOp.service}</div>
+                                        <span className="text-[9px] bg-slate-350 dark:bg-slate-800 text-txtmuted px-1.5 py-0.5 rounded font-bold font-mono">
+                                          {language === "ar" ? "سند مقبوض" : "INVOICE SETTLED"}
+                                        </span>
+                                      </td>
+                                      <td className="py-3.5 px-3">
+                                        <span className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[10px] font-bold py-1 px-2.5 rounded-full flex items-center justify-center gap-1 max-w-[150px] mx-auto select-none">
+                                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                                          <span>{language === "ar" ? "مسدد بالكامل" : "Paid & Verified"}</span>
+                                        </span>
+                                      </td>
+                                      <td className="py-3.5 px-3 text-end font-mono font-black text-emerald-500">
+                                        +{inv.amount.toLocaleString()} <span className="text-[10px] font-sans text-txtmuted">{companyCurrency}</span>
+                                      </td>
+                                      <td className="py-3.5 px-4">
+                                        <div className="flex items-center justify-center">
+                                          <button
+                                            onClick={() => setPortalSelectedInvoiceForPrint(inv)}
+                                            className="border border-emerald-500/20 hover:border-emerald-500 bg-emerald-500/10 text-emerald-500 font-extrabold px-3 py-1.5 rounded-lg text-[10px] duration-150 flex items-center gap-1 cursor-pointer"
+                                          >
+                                            <FileCheck className="w-3.5 h-3.5 text-emerald-500" />
+                                            <span>{language === "ar" ? "تحميل إيصال سداد مختوم" : "Print Compliance Receipt"}</span>
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )
+                      )}
+
+                    </div>
+                  </>
+                );
+              })()}
+
+            </div>
+          )}
+
+        </div>
+      )}
+
+      {/* RENDER MODAL: Shared detailed Print Receipt Template */}
+      {portalSelectedInvoiceForPrint && portalSelectedClient && (
+        <InvoicePrintModal
+          invoice={portalSelectedInvoiceForPrint}
+          client={portalSelectedClient}
+          operation={operations.find(o => o.id === portalSelectedInvoiceForPrint.op_id) || { id: "", company_id: "", client_id: "", service: language === "ar" ? "عملية تسليم فنية مجهولة" : "Corporate Delivery Project", cost: 0, revenue: 0, profit: 0, date: "" }}
+          company={currentCompany}
+          onClose={() => setPortalSelectedInvoiceForPrint(null)}
+        />
       )}
 
     </div>
