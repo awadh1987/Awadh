@@ -1,6 +1,6 @@
 {
-  "name": "نظام الإدارة المالية والعمليات ERP",
-  "description": "نظام إدارة مالية وعمليات احترافي (SaaS ERP) متعدد الشركات يدعم إدارة العملاء، الفواتير التلقائية، تتبع الأرباح والتنبيهات بالفواتير المتأخرة.",
+  "name": "SaaS Finance and Operations ERP",
+  "description": "A professional multi-tenant SaaS ERP operations manager supporting billing, customer accounts, ZATCA v2 compliant VAT invoicing, audit logs, and automated payments.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

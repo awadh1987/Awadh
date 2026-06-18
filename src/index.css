@@ -42,12 +42,13 @@ body {
   }
   
   /* Render ONLY the premium printable A4 document area and its details */
-  #printable-invoice-area, #printable-invoice-area * {
+  #printable-invoice-area, #printable-invoice-area *,
+  #printable-report-area, #printable-report-area * {
     visibility: visible;
   }
   
   /* Stretch invoice area over the entire physical printed sheet */
-  #printable-invoice-area {
+  #printable-invoice-area, #printable-report-area {
     position: absolute;
     left: 0;
     top: 0;

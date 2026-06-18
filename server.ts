@@ -256,7 +256,17 @@ async function startServer() {
   // 2.5. Update company settings
   app.put("/api/companies/:id", (req, res) => {
     const { id } = req.params;
-    const { name, logo_url, primary_color, currency, widget_order, enable_due_email_notifications } = req.body;
+    const { 
+      name, 
+      logo_url, 
+      primary_color, 
+      currency, 
+      widget_order, 
+      enable_due_email_notifications,
+      annual_revenue_budget,
+      annual_cost_budget,
+      annual_profit_budget
+    } = req.body;
     const db = readDb();
     
     db.companies = db.companies || [];
@@ -275,6 +285,16 @@ async function startServer() {
     db.companies[index].widget_order = widget_order || "";
     db.companies[index].enable_due_email_notifications = enable_due_email_notifications === true;
     
+    if (annual_revenue_budget !== undefined) {
+      db.companies[index].annual_revenue_budget = Number(annual_revenue_budget) || 0;
+    }
+    if (annual_cost_budget !== undefined) {
+      db.companies[index].annual_cost_budget = Number(annual_cost_budget) || 0;
+    }
+    if (annual_profit_budget !== undefined) {
+      db.companies[index].annual_profit_budget = Number(annual_profit_budget) || 0;
+    }
+
     const notificationStatusText = enable_due_email_notifications
       ? "تفعيل الإشعارات البريدية التلقائية"
       : "تعطيل الإشعارات البريدية التلقائية";
@@ -283,7 +303,7 @@ async function startServer() {
       db,
       id,
       "تعديل إعدادات وهوية المنشأة",
-      `تم تحديث هوية المنشأة "${prevName}" إلى: الاسم "${name || prevName}"، العملة: "${currency || "ر.س"}"، واللون الأساسي: "${primary_color || "تلقائي"}"، وترتيب الإحصائيات: "${widget_order || "تلقائي"}"، وحالة الإشعارات: "${notificationStatusText}"`
+      `تم تحديث هوية المنشأة "${prevName}" وتعديل التخطيط المالي السنوي والميزانيات التقديرية`
     );
     
     writeDb(db);

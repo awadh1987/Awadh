@@ -11,6 +11,9 @@ export interface Company {
   subscription_price_paid?: number;
   subscription_billing_cycle?: "monthly" | "yearly";
   enable_due_email_notifications?: boolean;
+  annual_revenue_budget?: number;
+  annual_cost_budget?: number;
+  annual_profit_budget?: number;
 }
 
 export interface Client {

@@ -27,6 +27,16 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Allow database sync on company budgets
+    match /companies/{companyId}/budgets/{budgetId} {
+      allow read, write: if true;
+    }
+
+    // Allow database sync on company members
+    match /companies/{companyId}/members/{memberId} {
+      allow read, write: if true;
+    }
+
     // Allow database sync on company audit logs
     match /companies/{companyId}/audit_logs/{logId} {
       allow read, write: if true;
