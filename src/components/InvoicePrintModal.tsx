@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from "react";
 import { Invoice, Client, Operation, Company } from "../types";
-import { Printer, X, Check, FileCheck, Phone, MapPin, Building, ShieldCheck, Mail, Calendar, Hash, DollarSign, Share2 } from "lucide-react";
+import { Printer, X, Check, FileCheck, Phone, MapPin, Building, ShieldCheck, Mail, Calendar, Hash, DollarSign, Share2, CreditCard, Lock } from "lucide-react";
 import { useLanguage } from "../lib/LanguageContext";
 
 interface InvoicePrintModalProps {
@@ -9,6 +9,7 @@ interface InvoicePrintModalProps {
   operation: Operation;
   company: Company | null;
   onClose: () => void;
+  onPaymentSuccess?: () => void;
 }
 
 export default function InvoicePrintModal({
@@ -16,7 +17,8 @@ export default function InvoicePrintModal({
   client,
   operation,
   company,
-  onClose
+  onClose,
+  onPaymentSuccess
 }: InvoicePrintModalProps) {
   const { language, t } = useLanguage();
   const companyName = company?.name || (language === "ar" ? "منشأة تجارية" : "Business Enterprise");
@@ -26,6 +28,45 @@ export default function InvoicePrintModal({
 
   const [customNote, setCustomNote] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<"classic" | "modern" | "corporate" | "elegant">("classic");
+
+  // Payment simulator states
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentCardNumber, setPaymentCardNumber] = useState("");
+  const [paymentExpiry, setPaymentExpiry] = useState("");
+  const [paymentCvc, setPaymentCvc] = useState("");
+  const [paymentName, setPaymentName] = useState(client?.name || "");
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
+  const [paymentStep, setPaymentStep] = useState(0);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
+
+  const handleProcessPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!paymentCardNumber.trim() || !paymentExpiry.trim() || !paymentCvc.trim()) {
+      return;
+    }
+    setPaymentProcessing(true);
+    setPaymentStep(1);
+
+    // Simulated Stripe Checkout Steps
+    const steps = [
+      { step: 1, delay: 1000 },
+      { step: 2, delay: 1200 },
+      { step: 3, delay: 1300 },
+      { step: 4, delay: 800 }
+    ];
+
+    for (const s of steps) {
+      await new Promise((resolve) => setTimeout(resolve, s.delay));
+      setPaymentStep(s.step);
+    }
+
+    setPaymentProcessing(false);
+    setPaymentSuccess(true);
+    
+    if (onPaymentSuccess) {
+      onPaymentSuccess();
+    }
+  };
 
   useEffect(() => {
     setCustomNote(
@@ -873,6 +914,54 @@ export default function InvoicePrintModal({
 
             </div>
 
+            {/* Payment Gateway Integration Placeholder Card */}
+            <div className="mt-4 mb-6 p-4 rounded-xl border border-dashed text-start transition-all" style={{
+              borderColor: invoice.status === "Paid" ? "rgba(16, 185, 129, 0.4)" : `${primaryColorVal}40`,
+              backgroundColor: invoice.status === "Paid" ? "rgba(240, 253, 250, 0.4)" : "rgba(249, 250, 251, 0.6)"
+            }}>
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1 px-2 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold text-[9px] uppercase tracking-wider font-mono">
+                      Stripe Secure
+                    </div>
+                    <span className="font-extrabold text-xs text-slate-850">
+                      {language === "ar" ? "بوابة السداد الإلكتروني الفوري للعملاء" : "Instant Invoice Settlement Link"}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-normal">
+                    {language === "ar"
+                      ? "يمكن للعميل نقر الرابط لسداد المستحقات بضغطة زر آمنة دون حاجة التحويلات اليدوية."
+                      : "Direct modern settlement. Click to authorize secure card, Apple Pay or bank verification."}
+                  </p>
+                </div>
+
+                <div>
+                  {invoice.status === "Paid" ? (
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-855 border border-emerald-200 text-[10.5px] font-black">
+                      <Check className="w-4 h-4" />
+                      <span>{language === "ar" ? "تم تحصيل الفاتورة وتوثيقها" : "Invoice settled successfully"}</span>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setPaymentSuccess(false);
+                        setPaymentCardNumber("");
+                        setPaymentExpiry("");
+                        setPaymentCvc("");
+                        setShowPaymentModal(true);
+                      }}
+                      className="px-4 py-2.5 rounded-xl text-xs font-black text-white hover:opacity-90 duration-155 cursor-pointer shadow-sm hover:scale-[1.02] flex items-center gap-2 transition-all shrink-0"
+                      style={{ backgroundColor: primaryColorVal }}
+                    >
+                      <CreditCard className="w-3.5 h-3.5" />
+                      <span>{language === "ar" ? "سداد الفاتورة إلكترونياً" : "Pay Securely with Stripe"}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {/* Custom note on invoice bottom */}
             {customNote.trim() && (
               <div className="bg-slate-50 border border-slate-200/50 p-3 rounded-xl text-[10px] text-slate-500 leading-relaxed mb-6 text-start">
@@ -1069,6 +1158,207 @@ export default function InvoicePrintModal({
                 </form>
               )}
 
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {showPaymentModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full overflow-hidden shadow-2xl flex flex-col relative" style={{ direction: language === "ar" ? "rtl" : "ltr" }}>
+            
+            {/* Header */}
+            <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-900/50">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-500 dark:text-indigo-400">
+                  <CreditCard className="w-4 h-4" />
+                </div>
+                <div className="text-start">
+                  <h3 className="text-sm font-black text-slate-800 dark:text-white flex items-center gap-1.5">
+                    <span>{language === "ar" ? "بوابة سداد آمنة من Stripe" : "Secure Payment via Stripe"}</span>
+                  </h3>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                    <Lock className="w-3 h-3 text-emerald-500" />
+                    <span>{language === "ar" ? "تشفير آمن بمستوى حماية البنوك" : "SaaS-grade direct SSL transaction"}</span>
+                  </p>
+                </div>
+              </div>
+              {!paymentProcessing && (
+                <button
+                  onClick={() => setShowPaymentModal(false)}
+                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-all cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Body */}
+            <div className="p-6">
+              {paymentProcessing ? (
+                /* Processing Screen */
+                <div className="py-8 flex flex-col items-center justify-center text-center space-y-6">
+                  <div className="relative flex items-center justify-center">
+                    <div className="w-16 h-16 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+                    <div className="absolute w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-500 animate-pulse">
+                      <Lock className="w-4 h-4" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-black text-slate-800 dark:text-white tracking-wide">
+                      {language === "ar" ? "جاري تفويض عملية الدفع..." : "Authorizing transaction..."}
+                    </h4>
+                    <p className="text-[10.5px] text-indigo-600 dark:text-indigo-400 font-bold h-8 flex items-center justify-center">
+                      {paymentStep === 1 && (language === "ar" ? "جاري الاتصال بخوادم Stripe وتأمين المصادقة الثنائية..." : "Establishing SSL handshake with clearing gateway...")}
+                      {paymentStep === 2 && (language === "ar" ? "جاري التحقق من كفاية الرصيد وأمان البطاقة المصرفية..." : "Validating secure tokens and credentials...")}
+                      {paymentStep === 3 && (language === "ar" ? "جاري تسجيل المعاملة في الدفتر السحابي وتسوية القيود..." : "Updating ledger & transmitting direct settlement logs...")}
+                      {paymentStep === 4 && (language === "ar" ? "تم استلام التفويض وإكمال السداد بنجاح!" : "Authorized successfully! Closing direct channel...")}
+                    </p>
+                  </div>
+
+                  <div className="w-full max-w-xs bg-slate-100 dark:bg-slate-850 h-1.5 rounded-full overflow-hidden">
+                    <div 
+                      className="bg-indigo-600 h-full transition-all duration-300" 
+                      style={{ width: `${(paymentStep / 4) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              ) : paymentSuccess ? (
+                /* Success Screen */
+                <div className="py-6 flex flex-col items-center justify-center text-center space-y-5">
+                  <div className="w-14 h-14 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-2xl flex items-center justify-center animate-bounce">
+                    <ShieldCheck className="w-7 h-7" />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <h4 className="text-sm font-black text-slate-800 dark:text-white">
+                      {language === "ar" ? "تم السداد والتحصيل بنجاح!" : "Paid & Settled!"}
+                    </h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm leading-relaxed">
+                      {language === "ar" 
+                        ? `تم تحصيل مبلغ ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} ${currency} وتحديث السجل المالي للفاتورة رقم #${invoice.id.split("-").pop()} بنجاح.` 
+                        : `Payment of ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} ${currency} completed successfully for invoice #${invoice.id.split("-").pop()}.`}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowPaymentModal(false)}
+                    className="mt-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-8 rounded-xl text-xs transition-all cursor-pointer shadow-md shadow-emerald-500/10"
+                  >
+                    {language === "ar" ? "إغلاق النافذة" : "Awesome"}
+                  </button>
+                </div>
+              ) : (
+                /* Stripe Card Form */
+                <form onSubmit={handleProcessPayment} className="space-y-4">
+                  
+                  {/* Amount Badge */}
+                  <div className="bg-indigo-50 dark:bg-indigo-950/45 p-4 rounded-xl border border-indigo-100 dark:border-indigo-950 flex justify-between items-center text-start">
+                    <span className="text-xs text-slate-500 dark:text-slate-450">{language === "ar" ? "المبلغ المستحق الدفع" : "Amount to Pay"}</span>
+                    <span className="text-sm font-black text-indigo-700 dark:text-indigo-400 font-mono">
+                      {grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currency}
+                    </span>
+                  </div>
+
+                  {/* Card Number */}
+                  <div className="space-y-1 text-start">
+                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>{language === "ar" ? "رقم البطاقة الائتمانية *" : "Card Number *"}</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        required
+                        placeholder="4242  4242  4242  4242"
+                        value={paymentCardNumber}
+                        onChange={(e) => {
+                          let v = e.target.value.replace(/\s+/g, "").replace(/[^0-9]/gi, "");
+                          let parts = [];
+                          for (let i = 0; i < v.length; i += 4) {
+                            parts.push(v.substring(i, i + 4));
+                          }
+                          setPaymentCardNumber(parts.join("  "));
+                        }}
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-850 dark:text-white rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors font-mono tracking-widest pl-10"
+                      />
+                      <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs shrink-0 flex items-center pointer-events-none">
+                        <CreditCard className="w-4 h-4 text-indigo-500" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Expiry / CVC row */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1 text-start">
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <span>{language === "ar" ? "تاريخ الانتهاء *" : "Expiration *"}</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={5}
+                        placeholder="MM/YY"
+                        value={paymentExpiry}
+                        onChange={(e) => {
+                          let v = e.target.value.replace(/\s+/g, "").replace(/[^0-9]/gi, "");
+                          if (v.length >= 2) {
+                            setPaymentExpiry(v.substring(0, 2) + "/" + v.substring(2, 4));
+                          } else {
+                            setPaymentExpiry(v);
+                          }
+                        }}
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-850 dark:text-white rounded-xl px-3.5 py-2.5 text-xs text-center focus:outline-none focus:border-indigo-500 transition-colors font-mono tracking-wider"
+                      />
+                    </div>
+
+                    <div className="space-y-1 text-start">
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <span>{language === "ar" ? "رمز الأمان (CVC) *" : "Secure Code (CVC) *"}</span>
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        maxLength={4}
+                        placeholder="•••"
+                        value={paymentCvc}
+                        onChange={(e) => setPaymentCvc(e.target.value.replace(/\s+/g, "").replace(/[^0-9]/gi, ""))}
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-850 dark:text-white rounded-xl px-3.5 py-2.5 text-xs text-center focus:outline-none focus:border-indigo-500 transition-colors font-mono tracking-wider"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Cardholder Name */}
+                  <div className="space-y-1 text-start">
+                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>{language === "ar" ? "اسم حامل البطاقة *" : "Cardholder Name *"}</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={paymentName}
+                      onChange={(e) => setPaymentName(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-850 dark:text-white rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors font-sans"
+                    />
+                  </div>
+
+                  {/* Submit pay button */}
+                  <button
+                    type="submit"
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-indigo-600/10 hover:scale-[1.01]"
+                  >
+                    <Lock className="w-4 h-4 text-emerald-400" />
+                    <span>{language === "ar" ? `دفع المعاملة آمن بقيمة ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} ${currency}` : `Pay ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} ${currency} via Stripe`}</span>
+                  </button>
+
+                  <div className="text-[9.5px] text-slate-400 text-center leading-normal mt-2 pb-1 flex items-center justify-center gap-1.5 font-mono">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>PCI-DSS Level 1 Compliant Security Standard</span>
+                  </div>
+                </form>
+              )}
             </div>
 
           </div>

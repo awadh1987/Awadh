@@ -13,9 +13,20 @@ interface OperationsProps {
   onCreateOperation: (data: { service: string; client_id: string; cost: number; revenue: number; status?: "Pending" | "In Progress" | "Completed" }) => Promise<void>;
   onDeleteOperation?: (id: string) => Promise<void>;
   onUpdateOperationStatus?: (id: string, status: "Pending" | "In Progress" | "Completed") => Promise<void>;
+  onBulkUpdateOperationStatus?: (ids: string[], status: "Pending" | "In Progress" | "Completed") => Promise<void>;
+  onBulkDeleteOperations?: (ids: string[]) => Promise<void>;
 }
 
-export default function Operations({ operations, clients, companyCurrency = "ر.س", onCreateOperation, onDeleteOperation, onUpdateOperationStatus }: OperationsProps) {
+export default function Operations({ 
+  operations, 
+  clients, 
+  companyCurrency = "ر.س", 
+  onCreateOperation, 
+  onDeleteOperation, 
+  onUpdateOperationStatus,
+  onBulkUpdateOperationStatus,
+  onBulkDeleteOperations
+}: OperationsProps) {
   const { language, t } = useLanguage();
   const [service, setService] = useState("");
   const [clientId, setClientId] = useState("");
@@ -25,6 +36,7 @@ export default function Operations({ operations, clients, companyCurrency = "ر.
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // Advanced Filtering States
   const [filterClientId, setFilterClientId] = useState("");
@@ -727,6 +739,63 @@ export default function Operations({ operations, clients, companyCurrency = "ر.
             )}
           </div>
 
+          {/* Bulk mass operation tools */}
+          {selectedIds.length > 0 && (
+            <div className="mb-4 bg-indigo-500/10 border border-indigo-500/20 p-4 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 text-start animate-in fade-in slide-in-from-top-2 duration-150">
+              <div className="text-xs">
+                <span className="font-extrabold text-indigo-400 text-sm">
+                  {language === "ar" ? `تم تحديد ${selectedIds.length} عملية تشغيلية` : `${selectedIds.length} operations selected`}
+                </span>
+                <p className="text-[10px] text-txtmuted mt-0.5">
+                  {language === "ar" 
+                    ? "يمكنك تنفيذ تصفية وتحديث حالة مجمع للعمليات التشغيلية والخدمية المحددة أو تدميرها دفعة واحدة للمطابقة المحاسبية." 
+                    : "Apply bulk actions to update statuses or permanently delete the selected operations and their automated invoices."}
+                </p>
+              </div>
+              
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                <select
+                  onChange={(e) => {
+                    const status = e.target.value as any;
+                    if (status && onBulkUpdateOperationStatus) {
+                      onBulkUpdateOperationStatus(selectedIds, status);
+                      setSelectedIds([]);
+                    }
+                  }}
+                  defaultValue=""
+                  className="bg-appbk text-txtmain border border-borderline rounded-xl px-2.5 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer"
+                >
+                  <option value="" disabled>{language === "ar" ? "تغيير حالة مجمع لـ..." : "Update Status to..."}</option>
+                  <option value="Completed">{language === "ar" ? "مكتملة" : "Completed"}</option>
+                  <option value="In Progress">{language === "ar" ? "قيد التنفيذ" : "In Progress"}</option>
+                  <option value="Pending">{language === "ar" ? "معلقة" : "Pending"}</option>
+                </select>
+
+                {onBulkDeleteOperations && (
+                  <button
+                    onClick={() => {
+                      if (window.confirm(language === "ar" ? "🚨 هل أنت متأكد من رغبتك في حذف العمليات التشغيلية وسداد فواتيرها دفعة واحدة؟" : "🚨 Are you sure you want to delete all selected operations and their linked invoices?")) {
+                        onBulkDeleteOperations(selectedIds);
+                        setSelectedIds([]);
+                      }
+                    }}
+                    className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-sm shadow-rose-950/10"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{language === "ar" ? "حذف جماعي" : "Bulk Delete"}</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setSelectedIds([])}
+                  className="px-3.5 py-2 bg-appbk border border-borderline hover:bg-borderline text-txtmain text-xs font-bold rounded-xl transition-all cursor-pointer"
+                >
+                  {language === "ar" ? "إلغاء التحديد" : "Deselect"}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Table container */}
           <div className="overflow-x-auto">
             {filteredOps.length === 0 ? (
@@ -738,7 +807,21 @@ export default function Operations({ operations, clients, companyCurrency = "ر.
               <table className="w-full text-start border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-borderline text-txtmuted pb-3">
-                    <th className="font-bold py-3 px-2 text-start">{language === "ar" ? "الخدمة / العملية" : "Service / Action"}</th>
+                    <th className="py-3 px-2 text-center w-8">
+                      <input
+                        type="checkbox"
+                        checked={filteredOps.length > 0 && filteredOps.every(op => selectedIds.includes(op.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedIds(filteredOps.map(op => op.id));
+                          } else {
+                            setSelectedIds([]);
+                          }
+                        }}
+                        className="w-4 h-4 rounded border-borderline text-indigo-600 bg-appbk accent-indigo-500 cursor-pointer"
+                      />
+                    </th>
+                    <th className="font-bold py-3 px-2 text-start">{language === "ar" ? "العملية التشغيلية" : "Service / Action"}</th>
                     <th className="font-bold py-3 px-2 text-start">{language === "ar" ? "العميل" : "Client"}</th>
                     <th className="font-bold py-3 px-2 text-start">{language === "ar" ? "التكلفة" : "Production Cost"}</th>
                     <th className="font-bold py-3 px-2 text-start">{language === "ar" ? "الإيراد" : "Inflow Revenue"}</th>
@@ -750,7 +833,21 @@ export default function Operations({ operations, clients, companyCurrency = "ر.
                 </thead>
                 <tbody className="divide-y divide-borderline">
                   {filteredOps.map(op => (
-                    <tr key={op.id} className="hover:bg-appbk/50 transition-colors">
+                    <tr key={op.id} className={`hover:bg-appbk/50 transition-colors ${selectedIds.includes(op.id) ? "bg-indigo-500/5 hover:bg-indigo-500/10" : ""}`}>
+                      <td className="py-3.5 px-2 text-center font-mono">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(op.id)}
+                          onChange={() => {
+                            setSelectedIds(prev => 
+                              prev.includes(op.id) 
+                                ? prev.filter(id => id !== op.id) 
+                                : [...prev, op.id]
+                            );
+                          }}
+                          className="w-4 h-4 rounded border-borderline text-indigo-600 bg-appbk accent-indigo-500 cursor-pointer"
+                        />
+                      </td>
                       <td className="py-3.5 px-2 font-bold text-txtmain flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
                         {op.service}

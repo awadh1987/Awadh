@@ -237,6 +237,10 @@ export default function GoogleSync({
 
   // Fetch local expenses in ERP to send to Sheets
   const fetchExpenses = async () => {
+    if (!selectedCompanyId || selectedCompanyId === "undefined" || selectedCompanyId === "null") {
+      setExpenses([]);
+      return;
+    }
     try {
       const res = await fetch("/api/expenses", {
         headers: {
@@ -246,10 +250,13 @@ export default function GoogleSync({
       });
       if (res.ok) {
         const data = await res.json();
-        setExpenses(data);
+        setExpenses(data || []);
+      } else {
+        setExpenses([]);
       }
     } catch (err) {
-      console.error("Error loading expenses for sheets sync:", err);
+      console.warn("Silent/fallback warning loading expenses for sheets sync:", err);
+      setExpenses([]);
     }
   };
 

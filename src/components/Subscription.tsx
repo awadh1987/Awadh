@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { Company, AuditLog, TeamMember } from "../types";
 import { useLanguage } from "../lib/LanguageContext";
 import { motion, AnimatePresence } from "motion/react";
+import { getAuth } from "firebase/auth";
 import {
   Sparkles,
   CreditCard,
@@ -60,6 +61,27 @@ export default function Subscription({
   const [cardCVV, setCardCVV] = useState("");
   const [localLogs, setLocalLogs] = useState<AuditLog[]>([]);
 
+  // Setup headers with auth token for full microservice tenant security
+  const getSubHeaders = async (includeJson = false) => {
+    const headers: Record<string, string> = {};
+    if (includeJson) {
+      headers["Content-Type"] = "application/json";
+    }
+    if (currentCompany?.id) {
+      headers["x-company-id"] = currentCompany.id;
+    }
+    try {
+      const auth = getAuth();
+      const token = await auth.currentUser?.getIdToken();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+    } catch (e) {
+      console.warn("Failed to get idToken inside Subscription:", e);
+    }
+    return headers;
+  };
+
   // Core Sub-Tab choosing between pricing plans and Team governance
   const [activeSubTab, setActiveSubTab] = useState<"plans" | "team_roles">("plans");
 
@@ -79,17 +101,19 @@ export default function Subscription({
     if (!currentCompany?.id) return;
     setMembersLoading(true);
     try {
+      const headers = await getSubHeaders();
       const res = await fetch("/api/members", {
-        headers: {
-          "x-company-id": currentCompany.id
-        }
+        headers
       });
       if (res.ok) {
         const data = await res.json();
-        setMembers(data);
+        setMembers(data || []);
+      } else {
+        setMembers([]);
       }
     } catch (e) {
       console.error("Error fetching team members:", e);
+      setMembers([]);
     } finally {
       setMembersLoading(false);
     }
@@ -108,12 +132,10 @@ export default function Subscription({
         ? { name: memberFormName, role: memberFormRole, status: memberFormStatus }
         : { name: memberFormName, email: memberFormEmail, role: memberFormRole, status: memberFormStatus };
 
+      const headers = await getSubHeaders(true);
       const res = await fetch(url, {
         method,
-        headers: {
-          "Content-Type": "application/json",
-          "x-company-id": currentCompany.id
-        },
+        headers,
         body: JSON.stringify(payload)
       });
 
@@ -149,11 +171,10 @@ export default function Subscription({
     setMemberError("");
     setMemberSuccess("");
     try {
+      const headers = await getSubHeaders();
       const res = await fetch(`/api/members/${id}`, {
         method: "DELETE",
-        headers: {
-          "x-company-id": currentCompany.id
-        }
+        headers
       });
       if (!res.ok) {
         const errData = await res.json();
@@ -174,19 +195,24 @@ export default function Subscription({
 
   useEffect(() => {
     if (currentCompany?.id) {
-      fetch("/api/audit-logs", {
-        headers: {
-          "x-company-id": currentCompany.id
+      const loadSubscriptionLogs = async () => {
+        try {
+          const headers = await getSubHeaders();
+          const res = await fetch("/api/audit-logs", {
+            headers
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setLocalLogs(data || []);
+          } else {
+            setLocalLogs([]);
+          }
+        } catch (err) {
+          console.error("Failed to load subscription logs:", err);
+          setLocalLogs([]);
         }
-      })
-        .then((res) => {
-          if (res.ok) return res.json();
-          return [];
-        })
-        .then((data) => {
-          setLocalLogs(data);
-        })
-        .catch((err) => console.error("Failed to load subscription logs:", err));
+      };
+      loadSubscriptionLogs();
     }
   }, [currentCompany?.id, success]);
 
@@ -330,12 +356,10 @@ export default function Subscription({
           ? selectedPlanData?.priceYearly || 0
           : selectedPlanData?.priceMonthly || 0;
 
+      const headers = await getSubHeaders(true);
       const res = await fetch(`/api/companies/${currentCompany.id}/subscription`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "x-company-id": currentCompany.id
-        },
+        headers,
         body: JSON.stringify({
           subscription_plan: selectedPlan,
           subscription_billing_cycle: billingCycle,

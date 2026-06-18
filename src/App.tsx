@@ -19,7 +19,8 @@ import {
   Coins,
   Cloud,
   TrendingDown,
-  Zap
+  Zap,
+  ShieldAlert
 } from "lucide-react";
 import Dashboard from "./components/Dashboard";
 import Operations from "./components/Operations";
@@ -28,9 +29,11 @@ import BillingManager from "./components/BillingManager";
 import Backups from "./components/Backups";
 import Expenses from "./components/Expenses";
 import GoogleSync from "./components/GoogleSync";
+import AuditTrail from "./components/AuditTrail";
 import NotificationCenter from "./components/NotificationCenter";
 import Subscription from "./components/Subscription";
 import FixedAssets from "./components/FixedAssets";
+import ClientPortal from "./components/ClientPortal";
 import { Company, Client, Operation, Invoice, DashboardStats } from "./types";
 import { useLanguage } from "./lib/LanguageContext";
 import Login from "./components/Login";
@@ -101,6 +104,43 @@ export default function App() {
 
   // Active Role State with sandbox session overrides
   const [userRole, setUserRole] = useState<"owner" | "admin" | "subscriber">("owner");
+
+  // Public Client View Portal state
+  const [clientPortalId, setClientPortalId] = useState<string | null>(null);
+  const [clientPortalCompanyId, setClientPortalCompanyId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const cView = params.get("clientView") || params.get("clientId");
+    const compShared = params.get("companyId") || params.get("tenant") || params.get("company_id");
+    const invParam = params.get("invoice") || params.get("invoiceId");
+
+    if (cView && compShared) {
+      setClientPortalId(cView);
+      setClientPortalCompanyId(compShared);
+    } else if (invParam) {
+      fetch(`/api/public/invoice-lookup/${invParam}`)
+        .then(res => {
+          if (!res.ok) throw new Error("Public lookup failed");
+          return res.json();
+        })
+        .then(data => {
+          if (data.clientId && data.companyId) {
+            setClientPortalId(data.clientId);
+            setClientPortalCompanyId(data.companyId);
+          }
+        })
+        .catch(e => {
+          console.error("Failed to resolve public client portal credentials for shared link:", e);
+        });
+    }
+  }, []);
+
+  const handleExitClientPortal = () => {
+    window.history.replaceState({}, document.title, window.location.pathname);
+    setClientPortalId(null);
+    setClientPortalCompanyId(null);
+  };
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -344,6 +384,95 @@ export default function App() {
     }
   };
 
+  // Handle manual email reminders on specific unpaid invoice
+  const handleSendInvoiceEmailReminder = async (invoiceId: string) => {
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}/remind-email`, {
+        method: "POST",
+        headers: getHeaders()
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "فشل إرسال البريد التذكيري");
+      
+      await loadCompanyData(false);
+      triggerBannerNotification(data.message || "تم إرسال التذكير البريدي للعميل بنجاح");
+    } catch (err: any) {
+      setErrorMsg(err.message || "فشل إرسال البريد الإلكتروني التذكيري");
+    }
+  };
+
+  // Handle bulk toggling status on multiple invoices
+  const handleBulkInvoiceStatus = async (invoiceIds: string[], status: "Paid" | "Unpaid") => {
+    try {
+      const res = await fetch(`/api/invoices/bulk-status`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify({ ids: invoiceIds, status })
+      });
+      if (!res.ok) throw new Error("فشل تعديل حالة سداد الفواتير مجمعة");
+      
+      await loadCompanyData(false);
+      triggerBannerNotification(
+        status === "Paid" 
+          ? "تم تحصيل الفواتير المحددة وتحديث الميزانية بنجاح" 
+          : "تم إلغاء تحصيل الفواتير المحددة بنجاح"
+      );
+    } catch (err: any) {
+      setErrorMsg(err.message || "فشل تغيير حالة الفواتير");
+    }
+  };
+
+  // Handle bulk deleting multiple invoices
+  const handleBulkInvoiceDelete = async (invoiceIds: string[]) => {
+    try {
+      const res = await fetch(`/api/invoices/bulk-delete`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify({ ids: invoiceIds })
+      });
+      if (!res.ok) throw new Error("فشل حذف الفواتير المحددة مجمعة");
+      
+      await loadCompanyData(false);
+      triggerBannerNotification("تم حذف وإلغاء الفواتير المحددة بنجاح");
+    } catch (err: any) {
+      setErrorMsg(err.message || "فشل حذف الفواتير");
+    }
+  };
+
+  // Handle bulk updating operations states
+  const handleBulkOperationStatus = async (operationIds: string[], status: "Pending" | "In Progress" | "Completed") => {
+    try {
+      const res = await fetch(`/api/operations/bulk-status`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify({ ids: operationIds, status })
+      });
+      if (!res.ok) throw new Error("فشل تحديث حالة العمليات مجمعة");
+      
+      await loadCompanyData(false);
+      triggerBannerNotification("تم تحديث حالة العمليات المحددة بنجاح");
+    } catch (err: any) {
+      setErrorMsg(err.message || "فشل تحديث العمليات");
+    }
+  };
+
+  // Handle bulk deleting multiple operations
+  const handleBulkOperationDelete = async (operationIds: string[]) => {
+    try {
+      const res = await fetch(`/api/operations/bulk-delete`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify({ ids: operationIds })
+      });
+      if (!res.ok) throw new Error("فشل حذف العمليات المحددة مجمعة");
+      
+      await loadCompanyData(false);
+      triggerBannerNotification("تم حذف وتطهير العمليات المحددة مع فواتيرها بنجاح");
+    } catch (err: any) {
+      setErrorMsg(err.message || "فشل حذف العمليات");
+    }
+  };
+
   // Toast notification system helper
   const triggerBannerNotification = (msg: string) => {
     setSuccessMsg(msg);
@@ -357,6 +486,18 @@ export default function App() {
     const currentComp = companies.find(c => c.id === selectedCompanyId);
     return currentComp ? currentComp.name : (language === "ar" ? "بيئة عمل افتراضية" : "Default Workspace");
   };
+
+  if (clientPortalId && clientPortalCompanyId) {
+    return (
+      <ClientPortal 
+        clientId={clientPortalId}
+        companyId={clientPortalCompanyId}
+        onGoBack={currentUser ? handleExitClientPortal : undefined}
+        isDarkMode={darkMode}
+        onToggleDarkMode={() => setDarkMode(!darkMode)}
+      />
+    );
+  }
 
   if (authChecking) {
     return (
@@ -563,6 +704,16 @@ export default function App() {
                 <Zap className="w-4 h-4 text-amber-500 animate-pulse" />
                 <span>{t("tab_subscriptions")}</span>
               </button>
+
+              {userRole === "owner" && (
+                <button
+                  onClick={() => { setActiveTab("audit-trail"); setSidebarOpen(false); }}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold font-mono transition-all text-start ${activeTab === "audit-trail" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-bold" : "hover:bg-slate-800/50 hover:text-white"}`}
+                >
+                  <ShieldAlert className="w-4 h-4 text-indigo-400" />
+                  <span>{language === "ar" ? "سجل التدقيق والمراقبة" : "Audit Trail Logs"}</span>
+                </button>
+              )}
             </nav>
           </div>
 
@@ -779,6 +930,8 @@ export default function App() {
                     onCreateOperation={handleCreateOperation} 
                     onDeleteOperation={handleDeleteOperation}
                     onUpdateOperationStatus={handleUpdateOperationStatus}
+                    onBulkUpdateOperationStatus={handleBulkOperationStatus}
+                    onBulkDeleteOperations={handleBulkOperationDelete}
                   />
                 )}
 
@@ -801,9 +954,12 @@ export default function App() {
                     operations={operations}
                     currentCompany={companies.find(c => c.id === selectedCompanyId) || null}
                     onToggleInvoice={handleToggleInvoice} 
+                    onSendEmailReminder={handleSendInvoiceEmailReminder}
                     onUpdateCompany={(updatedCompany) => {
                       setCompanies(companies.map(c => c.id === updatedCompany.id ? updatedCompany : c));
                     }}
+                    onBulkUpdateInvoiceStatus={handleBulkInvoiceStatus}
+                    onBulkDeleteInvoices={handleBulkInvoiceDelete}
                     userRole={userRole}
                     currentUserEmail={currentUser?.email || undefined}
                   />
@@ -855,6 +1011,10 @@ export default function App() {
                     userRole={userRole}
                     onChangeRole={(role) => setUserRole(role)}
                   />
+                )}
+
+                {activeTab === "audit-trail" && userRole === "owner" && (
+                  <AuditTrail selectedCompanyId={selectedCompanyId} />
                 )}
 
               </div>

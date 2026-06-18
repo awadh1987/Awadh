@@ -106,3 +106,12 @@ export interface DashboardStats {
   overdueCount: number;
   profitMargin: string;
 }
+
+export interface AuditLog {
+  id: string;
+  company_id: string;
+  timestamp: string;
+  action: string;
+  details: string;
+  user: string;
+}

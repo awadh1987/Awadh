@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Invoice, Client, Operation, Company } from "../types";
-import { Search, FileText, CheckCircle2, Clock, AlertTriangle, ExternalLink, Calendar, Printer, FileSpreadsheet, MessageSquare } from "lucide-react";
+import { Search, FileText, CheckCircle2, Clock, AlertTriangle, ExternalLink, Calendar, Printer, FileSpreadsheet, MessageSquare, Trash2, Mail } from "lucide-react";
 import InvoicePrintModal from "./InvoicePrintModal";
 import { useLanguage } from "../lib/LanguageContext";
 
@@ -10,13 +10,17 @@ interface InvoicesProps {
   operations: Operation[];
   currentCompany: Company | null;
   onToggleInvoice: (id: string, currentStatus: "Paid" | "Unpaid") => void;
+  onSendEmailReminder?: (id: string) => void;
+  onBulkUpdateInvoiceStatus?: (ids: string[], status: "Paid" | "Unpaid") => void;
+  onBulkDeleteInvoices?: (ids: string[]) => void;
 }
 
-export default function Invoices({ invoices, clients, operations, currentCompany, onToggleInvoice }: InvoicesProps) {
+export default function Invoices({ invoices, clients, operations, currentCompany, onToggleInvoice, onSendEmailReminder, onBulkUpdateInvoiceStatus, onBulkDeleteInvoices }: InvoicesProps) {
   const { language, t } = useLanguage();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Unpaid" | "Overdue">("All");
   const [selectedInvoiceForPrint, setSelectedInvoiceForPrint] = useState<Invoice | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const currency = currentCompany?.currency || "ر.س";
   const todayStr = new Date().toISOString().split("T")[0];
@@ -172,40 +176,131 @@ export default function Invoices({ invoices, clients, operations, currentCompany
         </div>
 
         {/* Tab Filters */}
-        <div className="flex flex-wrap gap-2 pt-2 border-t border-borderline">
-          <button
-            onClick={() => setStatusFilter("All")}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${statusFilter === "All" ? "bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm" : "bg-appbk text-txtmuted hover:bg-borderline/40"}`}
-          >
-            {language === "ar" ? `كل الفواتير (${invoices.length})` : `All Invoices (${invoices.length})`}
-          </button>
-          
-          <button
-            onClick={() => setStatusFilter("Paid")}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${statusFilter === "Paid" ? "bg-emerald-600 text-white shadow-sm" : "bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20"}`}
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            {language === "ar" ? `المدفوعة (${invoices.filter(i => i.status === "Paid").length})` : `Paid (${invoices.filter(i => i.status === "Paid").length})`}
-          </button>
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-borderline">
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setStatusFilter("All")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${statusFilter === "All" ? "bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm" : "bg-appbk text-txtmuted hover:bg-borderline/40"}`}
+            >
+              {language === "ar" ? `كل الفواتير (${invoices.length})` : `All Invoices (${invoices.length})`}
+            </button>
+            
+            <button
+              onClick={() => setStatusFilter("Paid")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${statusFilter === "Paid" ? "bg-emerald-600 text-white shadow-sm" : "bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20"}`}
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              {language === "ar" ? `المدفوعة (${invoices.filter(i => i.status === "Paid").length})` : `Paid (${invoices.filter(i => i.status === "Paid").length})`}
+            </button>
 
-          <button
-            onClick={() => setStatusFilter("Unpaid")}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${statusFilter === "Unpaid" ? "bg-indigo-600 text-white shadow-sm" : "bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20"}`}
-          >
-            <span className="w-2 h-2 rounded-full bg-indigo-400" />
-            {language === "ar" ? `غير المدفوعة (${invoices.filter(i => i.status === "Unpaid" && (!i.due_date || i.due_date >= todayStr)).length})` : `Unpaid (${invoices.filter(i => i.status === "Unpaid" && (!i.due_date || i.due_date >= todayStr)).length})`}
-          </button>
+            <button
+              onClick={() => setStatusFilter("Unpaid")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${statusFilter === "Unpaid" ? "bg-indigo-600 text-white shadow-sm" : "bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20"}`}
+            >
+              <span className="w-2 h-2 rounded-full bg-indigo-400" />
+              {language === "ar" ? `غير المدفوعة (${invoices.filter(i => i.status === "Unpaid" && (!i.due_date || i.due_date >= todayStr)).length})` : `Unpaid (${invoices.filter(i => i.status === "Unpaid" && (!i.due_date || i.due_date >= todayStr)).length})`}
+            </button>
 
-          <button
-            onClick={() => setStatusFilter("Overdue")}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${statusFilter === "Overdue" ? "bg-rose-600 text-white shadow-sm" : "bg-rose-500/10 text-rose-400 hover:bg-rose-500/20"}`}
-          >
-            <span className="w-2 h-2 rounded-full bg-rose-500" />
-            {language === "ar" ? `المتأخرة (${invoices.filter(i => i.status === "Unpaid" && i.due_date && i.due_date < todayStr).length})` : `Overdue (${invoices.filter(i => i.status === "Unpaid" && i.due_date && i.due_date < todayStr).length})`}
-          </button>
+            <button
+              onClick={() => setStatusFilter("Overdue")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${statusFilter === "Overdue" ? "bg-rose-600 text-white shadow-sm" : "bg-rose-500/10 text-rose-400 hover:bg-rose-500/20"}`}
+            >
+              <span className="w-2 h-2 rounded-full bg-rose-500" />
+              {language === "ar" ? `المتأخرة (${invoices.filter(i => i.status === "Unpaid" && i.due_date && i.due_date < todayStr).length})` : `Overdue (${invoices.filter(i => i.status === "Unpaid" && i.due_date && i.due_date < todayStr).length})`}
+            </button>
+          </div>
+
+          {filteredInvoices.length > 0 && (
+            <button
+              onClick={() => {
+                const filteredKeys = filteredInvoices.map(i => i.id);
+                const allSelected = filteredKeys.every(id => selectedIds.includes(id));
+                if (allSelected) {
+                  setSelectedIds(prev => prev.filter(id => !filteredKeys.includes(id)));
+                } else {
+                  setSelectedIds(prev => Array.from(new Set([...prev, ...filteredKeys])));
+                }
+              }}
+              className="px-3.5 py-2 rounded-xl border border-borderline bg-appbk hover:bg-borderline/40 text-xs text-txtmain font-bold flex items-center gap-2 cursor-pointer transition-all self-end md:self-auto"
+            >
+              <input
+                type="checkbox"
+                checked={filteredInvoices.length > 0 && filteredInvoices.every(i => selectedIds.includes(i.id))}
+                readOnly
+                className="w-3.5 h-3.5 rounded border-borderline text-indigo-600 bg-appbk accent-indigo-500 cursor-pointer pointer-events-none"
+              />
+              <span>
+                {filteredInvoices.every(i => selectedIds.includes(i.id))
+                  ? (language === "ar" ? "إلغاء تحديد الكل" : "Deselect All")
+                  : (language === "ar" ? "تحديد الكل المفلتر" : "Select All Filtered")}
+              </span>
+            </button>
+          )}
         </div>
 
       </div>
+
+      {/* Bulk Actions Panel */}
+      {selectedIds.length > 0 && (
+        <div className="bg-indigo-500/10 border border-indigo-500/20 p-5 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-start animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="text-xs">
+            <span className="font-extrabold text-indigo-400 text-sm">
+              {language === "ar" ? `تم تحديد ${selectedIds.length} فاتورة` : `${selectedIds.length} invoices selected`}
+            </span>
+            <p className="text-[10px] text-txtmuted mt-0.5">
+              {language === "ar" 
+                ? "يمكنك تنفيذ إجراءات جماعية لتغيير حالة سداد الفواتير المحددة أو حذفها دفعة واحدة للمطابقة المحاسبية." 
+                : "Apply mass operations to update system state or permanently delete the selected invoices."}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+            <button
+              onClick={() => {
+                if (onBulkUpdateInvoiceStatus) {
+                  onBulkUpdateInvoiceStatus(selectedIds, "Paid");
+                  setSelectedIds([]);
+                }
+              }}
+              className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-sm shadow-emerald-950/10"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>{language === "ar" ? "تحصيل جماعي" : "Mark Collected"}</span>
+            </button>
+            <button
+              onClick={() => {
+                if (onBulkUpdateInvoiceStatus) {
+                  onBulkUpdateInvoiceStatus(selectedIds, "Unpaid");
+                  setSelectedIds([]);
+                }
+              }}
+              className="px-3.5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-sm shadow-amber-950/10"
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>{language === "ar" ? "إلغاء تحصيل جماعي" : "Mark Pending"}</span>
+            </button>
+            {onBulkDeleteInvoices && (
+              <button
+                onClick={() => {
+                  if (window.confirm(language === "ar" ? "🚨 تنبيه: هل أنت متأكد من رغبتك في حذف وإلغاء كافة الفواتير المحددة دفعة واحدة؟" : "Warning: Are you sure you want to permanently delete all selected invoices?")) {
+                    onBulkDeleteInvoices(selectedIds);
+                    setSelectedIds([]);
+                  }
+                }}
+                className="px-3.5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-sm shadow-rose-950/10"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{language === "ar" ? "حذف جماعي" : "Delete Invoices"}</span>
+              </button>
+            )}
+            <button
+              onClick={() => setSelectedIds([])}
+              className="px-3.5 py-2.5 bg-appbk border border-borderline hover:bg-borderline text-txtmain text-xs font-bold rounded-xl transition-all cursor-pointer"
+            >
+              {language === "ar" ? "إلغاء التحديد" : "Deselect"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Directory Bills Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -224,23 +319,39 @@ export default function Invoices({ invoices, clients, operations, currentCompany
               <div 
                 key={inv.id} 
                 className={`bg-cardbk rounded-2xl shadow-sm border p-5 flex flex-col justify-between gap-4 transition-all hover:shadow-md relative overflow-hidden ${
-                  inv.status === "Paid" 
-                  ? "border-emerald-500/20 hover:border-emerald-500/40" 
-                  : isOverdue 
-                    ? "border-rose-500/30 bg-rose-500/5 animate-pulse" 
-                    : "border-borderline hover:border-indigo-500/30"
+                  selectedIds.includes(inv.id)
+                  ? "border-indigo-500 ring-1 ring-indigo-500/20"
+                  : inv.status === "Paid" 
+                    ? "border-emerald-500/20 hover:border-emerald-500/40" 
+                    : isOverdue 
+                      ? "border-rose-500/30 bg-rose-500/5 animate-pulse" 
+                      : "border-borderline hover:border-indigo-500/30"
                 }`}
               >
                 
                 {/* Diagonal Stripe for Quick identification */}
-                <div className={`absolute top-0 inset-x-y w-2 h-full ${language === "ar" ? "right-0" : "left-0"} ${inv.status === "Paid" ? "bg-emerald-500" : isOverdue ? "bg-rose-500" : "bg-indigo-500"}`} />
+                <div className={`absolute top-0 inset-x-y w-2 h-full ${language === "ar" ? "right-0" : "left-0"} ${selectedIds.includes(inv.id) ? "bg-indigo-500" : inv.status === "Paid" ? "bg-emerald-500" : isOverdue ? "bg-rose-500" : "bg-indigo-500"}`} />
 
                 {/* Bill Heading */}
                 <div className={`${language === "ar" ? "pr-3" : "pl-3"} space-y-2`}>
                   <div className="flex justify-between items-center gap-1.5">
-                    <span className="text-[9px] bg-appbk text-txtmuted font-mono px-2 py-0.5 rounded border border-borderline">
-                      Ref: {inv.id.substring(0, 10)}...
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(inv.id)}
+                        onChange={() => {
+                          setSelectedIds(prev => 
+                            prev.includes(inv.id) 
+                              ? prev.filter(id => id !== inv.id) 
+                              : [...prev, inv.id]
+                          );
+                        }}
+                        className="w-4 h-4 rounded border-borderline text-indigo-650 bg-appbk accent-indigo-500 cursor-pointer"
+                      />
+                      <span className="text-[9px] bg-appbk text-txtmuted font-mono px-2 py-0.5 rounded border border-borderline">
+                        Ref: {inv.id.substring(0, 10)}...
+                      </span>
+                    </div>
                     
                     {/* Badge Status */}
                     {inv.status === "Paid" ? (
@@ -343,13 +454,28 @@ Thank you for your cooperation and understanding.`;
                       </button>
                     )}
 
+                    {inv.status === "Unpaid" && (
+                      <button
+                        onClick={() => {
+                          if (onSendEmailReminder) {
+                            onSendEmailReminder(inv.id);
+                          }
+                        }}
+                        className="font-bold text-[10px] px-2.5 py-1.5 rounded-lg bg-indigo-500/20 hover:bg-indigo-300/30 text-indigo-450 dark:text-indigo-400 border border-indigo-500/20 duration-150 cursor-pointer flex items-center gap-1 transition-all"
+                        title={language === "ar" ? "إرسال تذكير بالبريد الإلكتروني للعميل" : "Send email reminder to client"}
+                      >
+                        <Mail className="w-3 h-3" />
+                        <span>{language === "ar" ? "تذكير إيميل" : "Email"}</span>
+                      </button>
+                    )}
+
                     <button
                       onClick={() => setSelectedInvoiceForPrint(inv)}
-                      className="font-bold text-[10px] px-2.5 py-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 duration-150 cursor-pointer flex items-center gap-1 transition-all"
-                      title={language === "ar" ? "معاينة وطباعة الفاتورة أو تصديرها كـ PDF" : "Preview, print or save as PDF"}
+                      className="font-bold text-[10px] px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-500/10 duration-150 cursor-pointer flex items-center gap-1.5 transition-all shadow-sm"
+                      title={language === "ar" ? "معاينة الفاتورة قبل تحميلها بصيغة PDF أو طباعتها" : "Preview PDF and print dynamically generated invoice"}
                     >
-                      <Printer className="w-3 h-3" />
-                      <span>{language === "ar" ? "PDF / طباعة" : "PDF / Print"}</span>
+                      <FileText className="w-3 h-3 text-indigo-100" />
+                      <span>{language === "ar" ? "معاينة PDF" : "Preview PDF"}</span>
                     </button>
 
                     <button
@@ -379,6 +505,16 @@ Thank you for your cooperation and understanding.`;
           operation={operations.find(o => o.id === selectedInvoiceForPrint.op_id) || { id: "", company_id: "", client_id: "", service: language === "ar" ? "عملية مجهولة" : "Unknown Service", cost: 0, revenue: 0, profit: 0, date: "" }}
           company={currentCompany}
           onClose={() => setSelectedInvoiceForPrint(null)}
+          onPaymentSuccess={() => {
+            if (selectedInvoiceForPrint.status === "Unpaid") {
+              onToggleInvoice(selectedInvoiceForPrint.id, "Unpaid");
+              // Update local state copy to immediately reflect payment success in the view
+              setSelectedInvoiceForPrint({
+                ...selectedInvoiceForPrint,
+                status: "Paid"
+              });
+            }
+          }}
         />
       )}
 

@@ -11,7 +11,10 @@ interface BillingManagerProps {
   operations: Operation[];
   currentCompany: Company | null;
   onToggleInvoice: (id: string, currentStatus: "Paid" | "Unpaid") => void;
+  onSendEmailReminder?: (id: string) => void;
   onUpdateCompany: (updated: Company) => void;
+  onBulkUpdateInvoiceStatus?: (ids: string[], status: "Paid" | "Unpaid") => void;
+  onBulkDeleteInvoices?: (ids: string[]) => void;
   userRole?: string;
   currentUserEmail?: string;
 }
@@ -22,7 +25,10 @@ export default function BillingManager({
   operations,
   currentCompany,
   onToggleInvoice,
+  onSendEmailReminder,
   onUpdateCompany,
+  onBulkUpdateInvoiceStatus,
+  onBulkDeleteInvoices,
   userRole,
   currentUserEmail,
 }: BillingManagerProps) {
@@ -83,6 +89,9 @@ export default function BillingManager({
             operations={operations}
             currentCompany={currentCompany}
             onToggleInvoice={onToggleInvoice}
+            onSendEmailReminder={onSendEmailReminder}
+            onBulkUpdateInvoiceStatus={onBulkUpdateInvoiceStatus}
+            onBulkDeleteInvoices={onBulkDeleteInvoices}
           />
         ) : (
           <SettingsComponent

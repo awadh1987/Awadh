@@ -591,12 +591,118 @@ async function startServer() {
     res.json(db.operations[opIndex]);
   });
 
+  // 6.2. Bulk update operations status
+  app.post("/api/operations/bulk-status", (req, res) => {
+    const companyId = getCompanyId(req);
+    const { ids, status } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "معرفات العمليات التشغيلية مطلوبة" });
+    }
+
+    if (!status || !["Pending", "In Progress", "Completed"].includes(status)) {
+      return res.status(400).json({ error: "حالة العملية غير صالحة" });
+    }
+
+    const db = readDb();
+    db.operations = db.operations || [];
+    
+    let updatedCount = 0;
+    const statusTranslations: Record<string, string> = {
+      "Pending": "معلقة",
+      "In Progress": "قيد التنفيذ",
+      "Completed": "مكتملة"
+    };
+
+    const updatedServices: string[] = [];
+
+    ids.forEach((id: string) => {
+      const idx = db.operations.findIndex((o: any) => o.id === id && o.company_id === companyId);
+      if (idx !== -1) {
+        db.operations[idx].status = status;
+        updatedServices.push(db.operations[idx].service);
+        updatedCount++;
+      }
+    });
+
+    if (updatedCount === 0) {
+      return res.status(404).json({ error: "لم يتم العثور على العمليات التشغيلية المحددة" });
+    }
+
+    logEvent(
+      db,
+      companyId,
+      "تحديث حالة العمليات دفعة واحدة",
+      `تم تغيير حالة عدد (${updatedCount}) من العمليات التشغيلية إلى (${statusTranslations[status] || status}): [${updatedServices.slice(0, 5).join("، ")}${updatedServices.length > 5 ? "..." : ""}]`
+    );
+
+    writeDb(db);
+    res.json({ success: true, updatedCount });
+  });
+
+  // 6.3. Bulk delete operations and associated invoices
+  app.post("/api/operations/bulk-delete", (req, res) => {
+    const companyId = getCompanyId(req);
+    const { ids } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "معرفات العمليات التشغيلية مطلوبة" });
+    }
+
+    const db = readDb();
+    db.operations = db.operations || [];
+    db.invoices = db.invoices || [];
+
+    const initialOpsLength = db.operations.length;
+    
+    // Find operations to delete for logging purposes
+    const opsToDelete = db.operations.filter((o: any) => ids.includes(o.id) && o.company_id === companyId);
+    
+    if (opsToDelete.length === 0) {
+      return res.status(404).json({ error: "لم يتم العثور على العمليات التشغيلية المحددة لحذفها" });
+    }
+
+    // Delete associated invoices
+    db.invoices = db.invoices.filter((i: any) => !(ids.includes(i.op_id) && i.company_id === companyId));
+
+    // Delete operations
+    db.operations = db.operations.filter((o: any) => !(ids.includes(o.id) && o.company_id === companyId));
+
+    const deletedCount = initialOpsLength - db.operations.length;
+    const deletedServices = opsToDelete.map((o: any) => o.service);
+
+    logEvent(
+      db,
+      companyId,
+      "حذف عمليات دفعة واحدة",
+      `تم حذف عدد (${deletedCount}) من العمليات التشغيلية مع فواتيرها التلقائية المرتبطة بها: [${deletedServices.slice(0, 5).join("، ")}${deletedServices.length > 5 ? "..." : ""}]`
+    );
+
+    writeDb(db);
+    res.json({ success: true, deletedCount });
+  });
+
   // 7. Get invoices
   app.get("/api/invoices", (req, res) => {
     const companyId = getCompanyId(req);
     const db = readDb();
     const invoices = (db.invoices || []).filter((i: Invoice) => i.company_id === companyId);
     res.json(invoices);
+  });
+
+  // 7.0. Public invoice lookup by ID (no auth needed for client shared links)
+  app.get("/api/public/invoice-lookup/:id", (req, res) => {
+    const { id } = req.params;
+    const db = readDb();
+    const invoice = (db.invoices || []).find((i: Invoice) => i.id === id);
+    if (!invoice) {
+      return res.status(404).json({ error: "Invoice not found" });
+    }
+    res.json({
+      clientId: invoice.client_id,
+      companyId: invoice.company_id,
+      invoice
+    });
   });
 
   // 7.1. Get overdue invoices for notification center
@@ -812,6 +918,155 @@ ${billLink}
     }
   });
 
+  // 7.3. Send a manual email reminder for a specific Unpaid/Overdue invoice
+  app.post("/api/invoices/:id/remind-email", async (req, res) => {
+    try {
+      const companyId = getCompanyId(req);
+      const invoiceId = req.params.id;
+      const db = readDb();
+
+      db.invoices = db.invoices || [];
+      const inv = db.invoices.find((i: any) => i.id === invoiceId && i.company_id === companyId);
+
+      if (!inv) {
+        return res.status(404).json({ error: "الفاتورة غير موجودة" });
+      }
+
+      if (inv.status !== "Unpaid") {
+        return res.status(400).json({ error: "لا يمكن إرسال تذكير لفاتورة مدفوعة ومحصلة بالفعل" });
+      }
+
+      db.companies = db.companies || [];
+      const company = db.companies.find((c: any) => c.id === companyId);
+      if (!company) {
+        return res.status(404).json({ error: "الشركة غير موجودة" });
+      }
+
+      const clients = db.clients || [];
+      const client = clients.find((c: any) => c.id === inv.client_id);
+      if (!client) {
+        return res.status(404).json({ error: "العميل المستهدف غير موجود" });
+      }
+
+      const operations = db.operations || [];
+      const op = operations.find((o: any) => o.id === inv.op_id);
+      const serviceName = op ? op.service : "تأجير / خدمات تشغيلية";
+
+      const clientEmail = client.email ? client.email.trim() : "";
+      const finalRecipient = clientEmail || `${client.name.replace(/\s+/g, '').toLowerCase()}@example.com`;
+
+      const todayStr = new Date().toISOString().split("T")[0];
+      const getDaysDiff = (date1Str: string, date2Str: string) => {
+        try {
+          const d1 = new Date(date1Str);
+          const d2 = new Date(date2Str);
+          d1.setHours(0,0,0,0);
+          d2.setHours(0,0,0,0);
+          const diffTime = d1.getTime() - d2.getTime();
+          return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        } catch {
+          return 99;
+        }
+      };
+
+      const daysRemaining = inv.due_date ? getDaysDiff(inv.due_date, todayStr) : 99;
+
+      const shortInvId = inv.id.split("-").pop() || inv.id;
+      const subject = `تذكير استحقاق الفاتورة رقم #INV-${shortInvId.toUpperCase()} - ${company.name}`;
+      
+      const webOrigin = req.headers.referer || req.headers.origin || "https://erp-portal.com";
+      const billLink = `${webOrigin}/?invoice=${inv.id}`;
+
+      let remainingText = "";
+      if (daysRemaining < 0) {
+        remainingText = `متأخرة منذ ${Math.abs(daysRemaining)} أيام`;
+      } else if (daysRemaining === 0) {
+        remainingText = "تستحق اليوم!";
+      } else {
+        remainingText = `تستحق خلال ${daysRemaining} أيام`;
+      }
+
+      const mailText = `مرحباً أ/ ${client.name}،
+
+نود تذكيركم بلطف باستحقاق الفاتورة الصادرة من "${company.name}" والمُستحقة لخدمة: "${serviceName}".
+
+* تفاصيل الفاتورة المستهدفة:
+- الرقم المرجعي: #INV-${shortInvId.toUpperCase()}
+- إجمالي المبلغ المستحق: ${inv.amount.toLocaleString()} ${company.currency || "ر.س"}
+- تاريخ الاستحقاق: ${inv.due_date || "—"} (${remainingText})
+
+نرجو التكرم بمراجعة الفاتورة وسداد المستحق المذكور أعلاه في أقرب فرصة مناسبة.
+
+مرفق لكم رابط الكشف الفوري والمباشر للفاتورة الضريبية المبسطة:
+${billLink}
+
+إذا كانت لديكم أي استفسارات أو تفاصيل إضافية، يرجى الرد على هذا البريد الإلكتروني مباشرة.
+
+نشكر لكم تعاونكم وحسن تعاملكم،
+قسم المالية والمطالبات - ${company.name}`;
+
+      // Setup transporter
+      let transporter: any;
+      const smtpHost = process.env.SMTP_HOST || "";
+      const smtpUser = process.env.SMTP_USER || "";
+      const smtpPass = process.env.SMTP_PASS || "";
+      const smtpPort = parseInt(process.env.SMTP_PORT || "587");
+      const smtpSecure = process.env.SMTP_SECURE === "true";
+
+      if (smtpHost && smtpUser) {
+        transporter = nodemailer.createTransport({
+          host: smtpHost,
+          port: smtpPort,
+          secure: smtpSecure,
+          auth: { user: smtpUser, pass: smtpPass }
+        });
+      } else {
+        transporter = {
+          sendMail: async (options: any) => {
+            console.log("------- SYSTEM MANUAL EMAIL REMINDER SIMULATION -------");
+            console.log(`To: ${options.to}`);
+            console.log(`Subject: ${options.subject}`);
+            console.log(`Body:\n${options.text}`);
+            console.log("-------------------------------------------------------");
+            return { messageId: "sim-id-" + Math.floor(Math.random() * 100000) };
+          }
+        };
+      }
+
+      await transporter.sendMail({
+        from: smtpUser || `"قسم المالية - ${company.name}" <claims@erp-billing.com>`,
+        to: finalRecipient,
+        subject: subject,
+        text: mailText
+      });
+
+      // Mark status date
+      inv.last_due_notification_sent_date = todayStr;
+
+      logEvent(
+        db,
+        companyId,
+        "إرسال تذكير استحقاق بريدي يدوي",
+        `تم إرسال تذكير استحقاق بريدي يدوي للعميل "${client.name}" للفاتورة رقم #INV-${shortInvId.toUpperCase()} بقيمة ${inv.amount.toLocaleString()} ${company.currency || "ر.س"} (البريد الإلكتروني للعميل: ${finalRecipient})`
+      );
+
+      writeDb(db);
+      try {
+        saveToFirestore(db).catch(err => console.warn("Background firestore update alert:", err));
+      } catch {}
+
+      res.json({
+        success: true,
+        message: `تم إرسال تذكير بريدي بنجاح للعميل "${client.name}" بالبريد: ${finalRecipient}`,
+        recipient: finalRecipient
+      });
+
+    } catch (err: any) {
+      console.error("Error in /api/invoices/:id/remind-email route:", err);
+      res.status(500).json({ error: "فشل إرسال البريد التذكيري: " + err.message });
+    }
+  });
+
   // 8. Put/Patch Update Invoice Payment Status
   app.patch("/api/invoices/:id", (req, res) => {
     const companyId = getCompanyId(req);
@@ -851,6 +1106,96 @@ ${billLink}
 
     writeDb(db);
     res.json(db.invoices[invIndex]);
+  });
+
+  // 8.1. Bulk Update Invoices Status
+  app.post("/api/invoices/bulk-status", (req, res) => {
+    const companyId = getCompanyId(req);
+    const { ids, status } = req.body; // "Paid" | "Unpaid"
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "معرفات الفواتير مطلوبة" });
+    }
+
+    if (status !== "Paid" && status !== "Unpaid") {
+      return res.status(400).json({ error: "حالة الفاتورة غير صالحة" });
+    }
+
+    const db = readDb();
+    db.invoices = db.invoices || [];
+
+    let updatedCount = 0;
+    const updatedInvoiceShortIds: string[] = [];
+
+    ids.forEach((id: string) => {
+      const idx = db.invoices.findIndex((i: Invoice) => i.id === id && i.company_id === companyId);
+      if (idx !== -1) {
+        db.invoices[idx].status = status;
+        if (status === "Paid") {
+          db.invoices[idx].payment_date = new Date().toISOString().split("T")[0];
+        } else {
+          delete db.invoices[idx].payment_date;
+        }
+        const shortId = id.split("-").pop() || id;
+        updatedInvoiceShortIds.push(`#${shortId}`);
+        updatedCount++;
+      }
+    });
+
+    if (updatedCount === 0) {
+      return res.status(404).json({ error: "لم يتم العثور على الفواتير المحددة" });
+    }
+
+    logEvent(
+      db,
+      companyId,
+      "تحديث حالة الفواتير دفعة واحدة",
+      `تحديث حالة سداد عدد (${updatedCount}) فواتير إلى (${status === "Paid" ? "✅ مدفوعة ومحصلة" : "⏳ غير مدفوعة / قيد الانتظار"}): [${updatedInvoiceShortIds.slice(0, 5).join("، ")}${updatedInvoiceShortIds.length > 5 ? "..." : ""}]`
+    );
+
+    writeDb(db);
+    res.json({ success: true, updatedCount });
+  });
+
+  // 8.2. Bulk Delete Invoices (or Cancel them)
+  app.post("/api/invoices/bulk-delete", (req, res) => {
+    const companyId = getCompanyId(req);
+    const { ids } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "معرفات الفواتير مطلوبة" });
+    }
+
+    const db = readDb();
+    db.invoices = db.invoices || [];
+
+    const initialInvoicesLength = db.invoices.length;
+
+    // Filter out the invoices to delete
+    const deletedInvs = db.invoices.filter((i: Invoice) => ids.includes(i.id) && i.company_id === companyId);
+    
+    if (deletedInvs.length === 0) {
+      return res.status(404).json({ error: "لم يتم العثور على الفواتير المحددة لحذفها" });
+    }
+
+    db.invoices = db.invoices.filter((i: Invoice) => !(ids.includes(i.id) && i.company_id === companyId));
+
+    const deletedCount = initialInvoicesLength - db.invoices.length;
+    const deletedAmountSum = deletedInvs.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+    const deletedShortIds = deletedInvs.map((i: any) => {
+      const shortId = i.id.split("-").pop() || i.id;
+      return `#${shortId}`;
+    });
+
+    logEvent(
+      db,
+      companyId,
+      "حذف الفواتير دفعة واحدة",
+      `تم حذف عدد (${deletedCount}) من الفواتير الضريبية بنجاح بإجمالي قيمة ${deletedAmountSum.toLocaleString()} ر.س المتمثلة في: [${deletedShortIds.slice(0, 5).join("، ")}${deletedShortIds.length > 5 ? "..." : ""}]`
+    );
+
+    writeDb(db);
+    res.json({ success: true, deletedCount });
   });
 
   // 9. Get stats & analysis for dashboard

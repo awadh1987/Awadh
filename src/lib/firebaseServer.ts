@@ -1,7 +1,9 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch } from "firebase/firestore";
+import { initializeFirestore, setLogLevel, collection, doc, getDocs, setDoc, deleteDoc, writeBatch } from "firebase/firestore";
 import fs from "fs";
 import path from "path";
+
+setLogLevel("error");
 
 let dbInstance: any = null;
 
@@ -16,7 +18,9 @@ function getDb() {
     }
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     const app = getApps().length === 0 ? initializeApp(config) : getApp();
-    dbInstance = getFirestore(app, config.firestoreDatabaseId || "ai-studio-57109c31-3ddb-49f9-9f07-feb4961cd427");
+    dbInstance = initializeFirestore(app, {
+      experimentalForceLongPolling: true,
+    }, config.firestoreDatabaseId || "ai-studio-57109c31-3ddb-49f9-9f07-feb4961cd427");
     return dbInstance;
   } catch (err) {
     console.error("Failed to initialize Firebase on server:", err);

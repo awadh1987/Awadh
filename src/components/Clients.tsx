@@ -4,7 +4,7 @@ import {
   PlusCircle, Search, Users, Phone, Building, UserPlus,
   BarChart3, Award, Clock, DollarSign, ArrowUpRight, 
   CheckCircle2, AlertCircle, ChevronRight, FileSpreadsheet, TrendingUp, Sparkles, Building2,
-  SlidersHorizontal, X, Calendar, Filter, Mail, Lock, Unlock, FileCheck, CheckCircle, Eye, LogOut, ShieldCheck
+  SlidersHorizontal, X, Calendar, Filter, Mail, Lock, Unlock, FileCheck, CheckCircle, Eye, LogOut, ShieldCheck, Share2, ExternalLink
 } from "lucide-react";
 import { useLanguage } from "../lib/LanguageContext";
 import InvoicePrintModal from "./InvoicePrintModal";
@@ -555,6 +555,7 @@ export default function Clients({
                         <th className="font-bold py-3 px-2 text-start">{language === "ar" ? "رقم التواصل" : "Contact Phone"}</th>
                         <th className="font-bold py-3 px-2 text-start">{language === "ar" ? "البريد الإلكتروني" : "Email Address"}</th>
                         <th className="font-bold py-3 px-2 text-center">{language === "ar" ? "الرمز المعرّف (ID)" : "Unique Identifier (ID)"}</th>
+                        <th className="font-bold py-3 px-2 text-center">{language === "ar" ? "بوابة العميل" : "Client Portal"}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-borderline">
@@ -581,6 +582,35 @@ export default function Clients({
                             <span className="font-mono text-txtmuted bg-appbk px-2 py-0.5 rounded text-[10px] border border-borderline">
                               {c.id.substring(0, 8)}...
                             </span>
+                          </td>
+                          <td className="py-3.5 px-2 text-center text-xs">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => {
+                                  const companyId = currentCompany?.id || "comp-1";
+                                  const shareUrl = `${window.location.origin}/?clientView=${c.id}&companyId=${companyId}`;
+                                  navigator.clipboard.writeText(shareUrl);
+                                  alert(language === "ar" 
+                                    ? `تم نسخ رابط كشف حساب العميل [${c.name}] لصحيفة الحافظة!` 
+                                    : `Shared client billing statement portal link for [${c.name}] copied to clipboard successfully!`
+                                  );
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-500 border border-indigo-500/20 font-bold transition-all duration-155 flex items-center gap-1 cursor-pointer text-[10.5px]"
+                                title={language === "ar" ? "نسخ رابط البوابة المشترك للعميل" : "Copy Shared Portal Link"}
+                              >
+                                <Share2 className="w-3.5 h-3.5" />
+                                <span>{language === "ar" ? "نسخ الرابط" : "Copy Link"}</span>
+                              </button>
+                              <a
+                                href={`/?clientView=${c.id}&companyId=${currentCompany?.id || "comp-1"}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="p-1 px-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-755 text-slate-550 dark:text-slate-350 border border-slate-300/40 dark:border-slate-800 transition-all text-center flex items-center justify-center cursor-pointer shrink-0"
+                                title={language === "ar" ? "معاينة بوابة العميل" : "Preview Client Portal"}
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
                           </td>
                         </tr>
                       ))}
